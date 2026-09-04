@@ -1,0 +1,248 @@
+"""Loading and typed access for the langgraph.json graph/config file."""
+
+import json
+from pathlib import Path
+from typing import TypedDict
+
+import structlog
+
+from agent_server.config.settings import settings
+
+logger = structlog.get_logger(__name__)
+
+
+class CorsConfig(TypedDict, total=False):
+    """CORS configuration options"""
+
+    allow_origins: list[str]
+    allow_methods: list[str]
+    allow_headers: list[str]
+    allow_credentials: bool
+    expose_headers: list[str]
+    max_age: int
+
+
+class HttpConfig(TypedDict, total=False):
+    """HTTP configuration options for custom routes"""
+
+    app: str
+    """Import path for custom Starlette/FastAPI app to mount"""
+    enable_custom_route_auth: bool
+    """Apply server authentication dependency to custom routes (uses FastAPI dependencies, not middleware)"""
+    cors: CorsConfig | None
+    """Custom CORS configuration"""
+
+
+class StoreIndexConfig(TypedDict, total=False):
+    """Configuration for vector embeddings in store.
+
+    Enables semantic similarity search using pgvector.
+    See: https://github.com/aegra/aegra/issues/104
+    """
+
+    dims: int
+    """Embedding vector dimensions (e.g., 1536 for OpenAI text-embedding-3-small)"""
+    embed: str
+    """Embedding model in format '<provider>:<model-id>'
+    Examples:
+    - openai:text-embedding-3-small (1536 dims)
+    - openai:text-embedding-3-large (3072 dims)
+    - bedrock:amazon.titan-embed-text-v2:0 (1024 dims)
+    - cohere:embed-english-v3.0 (1024 dims)
+    """
+    fields: list[str] | None
+    """JSON fields to embed. Defaults to ["$"] (entire document).
+    Examples:
+    - ["$"] - Embed entire document as one unit
+    - ["text", "summary"] - Embed specific top-level fields
+    - ["metadata.title", "content.text"] - JSON path notation
+    """
+
+
+class StoreConfig(TypedDict, total=False):
+    """Store configuration options"""
+
+    index: StoreIndexConfig | None
+    """Vector index configuration for semantic search"""
+    scopes: dict[str, list[str]]
+    """Map of namespace prefix -> list of User attributes used for configurable store scoping."""
+
+
+class CheckpointerTTLConfig(TypedDict, total=False):
+    """Thread TTL configuration nested under the checkpointer section."""
+
+    strategy: str
+    """Expiry strategy: 'delete' (thread + checkpoints) or 'keep_latest' (prune history)."""
+    default_ttl: float
+    """Default thread TTL in minutes applied to newly created threads."""
+    sweep_interval_minutes: float
+    """How often the background sweep runs."""
+    sweep_limit: int
+    """Max threads processed per sweep iteration."""
+
+
+class CheckpointerConfig(TypedDict, total=False):
+    """Checkpointer configuration options."""
+
+    ttl: CheckpointerTTLConfig | None
+    """Thread TTL / retention policy."""
+
+
+class AuthConfig(TypedDict, total=False):
+    """Auth configuration options."""
+
+    path: str
+    """Import path for auth handler in format './file.py:variable' or 'module:variable'.
+    Examples:
+    - './auth.py:auth' - Load 'auth' from auth.py in project root
+    - './src/auth/firebase.py:auth' - Load from nested path
+    - 'mypackage.auth:auth' - Load from installed package
+    """
+    disable_studio_auth: bool
+    """Disable authentication for LangGraph Studio connections"""
+
+
+def _resolve_config_path() -> Path | None:
+    """Resolve config file path using standard resolution order.
+
+    Resolution order:
+    1) GRAPHS_CONFIG env var (if set and file exists)
+    2) langgraph.json in CWD
+
+    Returns:
+        Path to config file or None if not found
+    """
+    # 1) Env var override - only use if file actually exists
+    if env_path := settings.app.GRAPHS_CONFIG:
+        path = Path(env_path)
+        if path.exists():
+            return path
+        logger.warning(f"GRAPHS_CONFIG={env_path!r} not found, falling back to config discovery")
+
+    # 2) langgraph.json in CWD
+    default_path = Path("langgraph.json")
+    if default_path.exists():
+        return default_path
+
+    return None
+
+
+def load_config() -> dict | None:
+    """Load full config file using standard resolution order.
+
+    Returns:
+        Full config dict or None if not found
+    """
+    config_path = _resolve_config_path()
+    if not config_path:
+        return None
+
+    try:
+        with config_path.open() as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            logger.warning(f"Config file {config_path} does not contain a JSON object")
+            return None
+        return data
+    except Exception as e:
+        logger.warning(f"Failed to load config from {config_path}: {e}")
+        return None
+
+
+def load_http_config() -> HttpConfig | None:
+    """Load HTTP config from langgraph.json.
+
+    Uses standard config resolution order.
+
+    Returns:
+        HTTP configuration dict or None if not found
+    """
+    config = load_config()
+    if config is None:
+        return None
+
+    http_config = config.get("http")
+    if http_config:
+        config_path = _resolve_config_path()
+        logger.info(f"Loaded HTTP config from {config_path}")
+        return http_config
+
+    return None
+
+
+def load_store_config() -> StoreConfig | None:
+    """Load store config from langgraph.json.
+
+    Uses standard config resolution order.
+
+    Returns:
+        Store configuration dict or None if not found
+    """
+    config = load_config()
+    if config is None:
+        return None
+
+    store_config = config.get("store")
+    if store_config:
+        config_path = _resolve_config_path()
+        logger.info(f"Loaded store config from {config_path}")
+        return store_config
+
+    return None
+
+
+def load_checkpointer_config() -> CheckpointerConfig | None:
+    """Load checkpointer config from langgraph.json.
+
+    Uses standard config resolution order.
+
+    Returns:
+        Checkpointer configuration dict or None if not found
+    """
+    config = load_config()
+    if config is None:
+        return None
+
+    checkpointer_config = config.get("checkpointer")
+    if checkpointer_config:
+        config_path = _resolve_config_path()
+        logger.info(f"Loaded checkpointer config from {config_path}")
+        return checkpointer_config
+
+    return None
+
+
+def load_auth_config() -> AuthConfig | None:
+    """Load auth config from langgraph.json.
+
+    Uses standard config resolution order.
+
+    Returns:
+        Auth configuration dict or None if not found
+    """
+    config = load_config()
+    if config is None:
+        return None
+
+    auth_config = config.get("auth")
+    if auth_config:
+        config_path = _resolve_config_path()
+        logger.info(f"Loaded auth config from {config_path}")
+        return auth_config
+
+    return None
+
+
+def get_config_dir() -> Path | None:
+    """Get the directory containing the config file.
+
+    This is used to resolve relative paths in the config file
+    (graphs, http.app, auth.path) relative to the config location.
+
+    Returns:
+        Path to config directory or None if no config found
+    """
+    config_path = _resolve_config_path()
+    if config_path and config_path.exists():
+        return config_path.parent.resolve()
+    return None

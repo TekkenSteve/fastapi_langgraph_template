@@ -1,0 +1,34 @@
+# VCS
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.ty_cache/
+
+# Node / frontends
+node_modules/
+
+# Tests & docs (not needed in runtime image)
+tests/
+docs/
+
+# Reference sources (not part of the template)
+archive/
+
+# IDE
+.vscode/
+.idea/
+
+# Misc
+.DS_Store
+.env

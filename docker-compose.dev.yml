@@ -1,0 +1,16 @@
+# Dev mode override — disables Redis, uses the in-process executor.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# This runs the server with LocalExecutor (asyncio.create_task) and an
+# in-memory broker — no Redis required.
+
+services:
+  app:
+    environment:
+      - REDIS_BROKER_ENABLED=false
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Keep Redis defined in the base file; the app just won't use it
+  # (REDIS_BROKER_ENABLED=false), avoiding compose dependency drift.

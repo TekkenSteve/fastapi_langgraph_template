@@ -1,0 +1,68 @@
+services:
+  # PostgreSQL database for LangGraph checkpoints and metadata
+  postgres:
+    image: pgvector/pgvector:pg18
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${POSTGRES_PUBLISH_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Agent Protocol server
+  app:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${PORT:-2026}:${PORT:-2026}"
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=postgres
+      - PYTHONPATH=/app/src
+      - REDIS_BROKER_ENABLED=true
+      - REDIS_URL=redis://redis:6379/0
+      - WORKER_COUNT=3
+      - N_JOBS_PER_WORKER=10
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:$${PORT:-2026}/health')\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    volumes:
+      - ./langgraph.json:/app/langgraph.json:ro
+      - ./src:/app/src:ro  # Mount full src for PYTHONPATH to work
+      - ./migrations:/app/migrations:ro # for migrations
+    command: ["uvicorn", "agent_server.app.main:app", "--host", "0.0.0.0", "--port", "${PORT:-2026}", "--reload"]
+
+  # Redis - enables multi-instance SSE streaming with pub/sub + replay
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PUBLISH_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:

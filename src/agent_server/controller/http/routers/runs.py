@@ -1,0 +1,599 @@
+"""Run endpoints for Agent Protocol"""
+
+import asyncio
+import contextlib
+from collections.abc import AsyncGenerator, MutableMapping
+from typing import Any
+
+import structlog
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from redis import RedisError
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sse_starlette import EventSourceResponse
+
+from agent_server.auth.deps import auth_dependency, get_current_user
+from agent_server.auth.handlers import build_auth_context, handle_event
+from agent_server.config.settings import settings
+from agent_server.domain import Run, RunCreate, RunStatus, User
+from agent_server.domain.enums import RunCancellationAction
+from agent_server.domain.errors import CONFLICT, NOT_FOUND, SSE_RESPONSE
+from agent_server.infra.sse import create_end_event, get_sse_headers, make_sse_response, sse_to_bytes
+from agent_server.repo.orm import Run as RunORM
+from agent_server.repo.orm import Thread as ThreadORM
+from agent_server.repo.orm import _get_session_maker, get_session
+from agent_server.usecase.execution.active_runs import active_runs
+from agent_server.usecase.execution.run_preparation import _prepare_run
+from agent_server.usecase.execution.run_status import interrupt_unowned_run
+from agent_server.usecase.execution.run_waiters import TERMINAL_STATES, encode_output, heartbeat_wait_body
+from agent_server.usecase.execution.status_compat import validate_run_status
+from agent_server.usecase.streaming.broker import broker_manager
+from agent_server.usecase.streaming.streaming_service import streaming_service
+
+router = APIRouter(tags=["Thread Runs"], dependencies=auth_dependency)
+
+logger = structlog.getLogger(__name__)
+
+
+# active_runs is imported from agent_server.usecase.execution.active_runs (dependency-free module)
+
+# Default stream modes for background run execution
+DEFAULT_STREAM_MODES = ["values"]
+
+
+async def _request_run_interruption(
+    session: AsyncSession,
+    run_orm: RunORM,
+    action: RunCancellationAction,
+) -> None:
+    """Interrupt a run without overwriting a terminal or live-owned run."""
+    if run_orm.status in TERMINAL_STATES:
+        return
+
+    reconciled = await interrupt_unowned_run(
+        session,
+        run_orm.run_id,
+        run_orm.thread_id,
+        user_id=run_orm.user_id,
+    )
+
+    if reconciled:
+        # A delayed worker can outlive an expired lease, so request a stop.
+        # Signaling stays here to close streams when no executor owns the run.
+        if action == "interrupt":
+            await streaming_service.interrupt_run(run_orm.run_id, emit_end_event=False)
+        else:
+            await streaming_service.cancel_run(run_orm.run_id, emit_end_event=False)
+        try:
+            await streaming_service.signal_run_cancelled(run_orm.run_id)
+        except (RedisError, OSError):
+            # Database reconciliation has already committed. A broker outage
+            # must not turn the successful interruption into an API error.
+            logger.exception("Failed to signal reconciled run interruption", run_id=run_orm.run_id)
+        return
+
+    await session.refresh(run_orm)
+    if run_orm.status in TERMINAL_STATES:
+        return
+
+    if action == "interrupt":
+        await streaming_service.interrupt_run(run_orm.run_id)
+    else:
+        await streaming_service.cancel_run(run_orm.run_id)
+
+
+async def _apply_create_run_auth(user: User, thread_id: str, request: RunCreate) -> None:
+    """Authorize threads.create_run and merge config/context overrides into request.
+
+    Handler-returned filter dict wins; otherwise fall back to in-place value mutations.
+    """
+    ctx = build_auth_context(user, "threads", "create_run")
+    value = {**request.model_dump(), "thread_id": thread_id}
+    filters = await handle_event(ctx, value)
+
+    source = filters if filters is not None else value
+    config_overrides = source.get("config")
+    if isinstance(config_overrides, dict):
+        request.config = {**(request.config or {}), **config_overrides}
+    context_overrides = source.get("context")
+    if isinstance(context_overrides, dict):
+        request.context = {**(request.context or {}), **context_overrides}
+
+    # Creating a run also reads its assistant, so per-assistant handler rules
+    # apply here exactly as they do in the cron-create chain.
+    await handle_event(
+        build_auth_context(user, "assistants", "read"),
+        {"assistant_id": request.assistant_id},
+    )
+
+
+@router.post("/threads/{thread_id}/runs", response_model=Run, responses={**NOT_FOUND, **CONFLICT})
+async def create_run(
+    thread_id: str,
+    request: RunCreate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Run:
+    """Create and execute a new run.
+
+    Starts graph execution asynchronously and returns the run record
+    immediately with status `pending`. Poll the run or use the stream
+    endpoint to follow progress. Provide either `input` or `command` (for
+    human-in-the-loop resumption) but not both.
+    """
+    existing_thread = await session.scalar(select(ThreadORM).where(ThreadORM.thread_id == thread_id))
+    if existing_thread and existing_thread.user_id != user.identity:
+        raise HTTPException(404, f"Thread '{thread_id}' not found")
+
+    await _apply_create_run_auth(user, thread_id, request)
+
+    _run_id, run, _job = await _prepare_run(session, thread_id, request, user, initial_status="pending")
+
+    return run
+
+
+@router.post("/threads/{thread_id}/runs/stream", responses={**SSE_RESPONSE, **NOT_FOUND, **CONFLICT})
+async def create_and_stream_run(
+    thread_id: str,
+    request: RunCreate,
+    user: User = Depends(get_current_user),
+) -> EventSourceResponse:
+    """Create a new run and stream its execution via SSE.
+
+    Returns a `text/event-stream` response with Server-Sent Events. Each
+    event has a `type` field (e.g. `values`, `updates`, `messages`,
+    `metadata`, `end`) and a JSON `data` payload.
+
+    Set `on_disconnect` to `"continue"` if the run should keep executing
+    after the client disconnects (default is `"cancel"`). Use `stream_mode`
+    to control which event types are emitted.
+
+    A periodic SSE keepalive comment is sent every
+    ``KEEPALIVE_INTERVAL_SECS`` so idle proxies don't drop long-running
+    silent nodes (e.g. agents holding an upstream WebSocket).
+    """
+    maker = _get_session_maker()
+    async with maker() as session:
+        existing_thread = await session.scalar(select(ThreadORM).where(ThreadORM.thread_id == thread_id))
+        if existing_thread and existing_thread.user_id != user.identity:
+            raise HTTPException(404, f"Thread '{thread_id}' not found")
+
+        await _apply_create_run_auth(user, thread_id, request)
+
+        run_id, run, _job = await _prepare_run(session, thread_id, request, user, initial_status="pending")
+
+    # Default to cancel on disconnect - this matches user expectation that clicking
+    # "Cancel" in the frontend will stop the backend task. Users can explicitly
+    # set on_disconnect="continue" if they want the task to continue.
+    cancel_on_disconnect = (request.on_disconnect or "cancel").lower() == "cancel"
+
+    async def _cancel_on_client_close(_msg: MutableMapping[str, Any]) -> None:
+        try:
+            await broker_manager.request_cancel(run_id, "cancel")
+        except (RedisError, OSError):
+            # Swallow infra/transport failures so sse-starlette's task group
+            # tears down cleanly. Programmer errors (TypeError, AttributeError,
+            # ...) propagate. The lease reaper picks up unreachable runs.
+            # OSError covers ConnectionError/TimeoutError (3.11+ subclasses).
+            logger.exception("Failed to cancel run on client disconnect", run_id=run_id)
+
+    close_handler = _cancel_on_client_close if cancel_on_disconnect else None
+
+    return make_sse_response(
+        sse_to_bytes(streaming_service.stream_run_execution(run, None)),
+        close_handler=close_handler,
+        headers={
+            **get_sse_headers(),
+            "Location": f"/threads/{thread_id}/runs/{run_id}/stream",
+            "Content-Location": f"/threads/{thread_id}/runs/{run_id}",
+        },
+    )
+
+
+@router.get("/threads/{thread_id}/runs/{run_id}", response_model=Run, responses={**NOT_FOUND})
+async def get_run(
+    thread_id: str,
+    run_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Run:
+    """Get a run by its ID.
+
+    Returns the current state of the run including its status, input, output,
+    and error information.
+    """
+    # Reading a run authorizes as a thread read (Agent Protocol has no `runs`
+    # resource); @auth.on.threads.read covers it.
+    ctx = build_auth_context(user, "threads", "read")
+    value = {"run_id": run_id, "thread_id": thread_id}
+    await handle_event(ctx, value)
+
+    stmt = select(RunORM).where(
+        RunORM.run_id == str(run_id),
+        RunORM.thread_id == thread_id,
+        RunORM.user_id == user.identity,
+    )
+    logger.info(f"[get_run] querying DB run_id={run_id} thread_id={thread_id} user={user.identity}")
+    run_orm = await session.scalar(stmt)
+    if not run_orm:
+        raise HTTPException(404, f"Run '{run_id}' not found")
+
+    # Refresh to ensure we have the latest data (in case background task updated it)
+    await session.refresh(run_orm)
+
+    logger.info(
+        f"[get_run] found run status={run_orm.status} user={user.identity} thread_id={thread_id} run_id={run_id}"
+    )
+    # Convert to Pydantic
+    return Run.model_validate(run_orm)
+
+
+@router.get("/threads/{thread_id}/runs", response_model=list[Run])
+async def list_runs(
+    thread_id: str,
+    limit: int = Query(10, ge=1, description="Maximum number of runs to return"),
+    offset: int = Query(0, ge=0, description="Number of runs to skip for pagination"),
+    status: str | None = Query(
+        None, description="Filter by run status (e.g. pending, running, success, error, interrupted)"
+    ),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[Run]:
+    """List runs for a thread.
+
+    Returns runs ordered by creation time (newest first). Use `status` to
+    filter and `limit`/`offset` to paginate.
+    """
+    stmt = (
+        select(RunORM)
+        .where(
+            RunORM.thread_id == thread_id,
+            RunORM.user_id == user.identity,
+            *([RunORM.status == status] if status else []),
+        )
+        .limit(limit)
+        .offset(offset)
+        .order_by(RunORM.created_at.desc())
+    )
+    logger.info(f"[list_runs] querying DB thread_id={thread_id} user={user.identity}")
+    result = await session.scalars(stmt)
+    rows = result.all()
+    runs = [Run.model_validate(r) for r in rows]
+    logger.info(f"[list_runs] total={len(runs)} user={user.identity} thread_id={thread_id}")
+    return runs
+
+
+@router.patch("/threads/{thread_id}/runs/{run_id}", response_model=Run, responses={**NOT_FOUND})
+async def update_run(
+    thread_id: str,
+    run_id: str,
+    request: RunStatus,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Run:
+    """Update a run's status.
+
+    Primarily used to interrupt a running execution. Set `status` to
+    `"interrupted"` to cooperatively stop the run. When a live worker owns
+    the run, interruption is asynchronous and the response may still report
+    `pending` or `running`. Poll or stream the run until it becomes terminal.
+    """
+    logger.info(f"[update_run] fetch for update run_id={run_id} thread_id={thread_id} user={user.identity}")
+    run_orm = await session.scalar(
+        select(RunORM).where(
+            RunORM.run_id == str(run_id),
+            RunORM.thread_id == thread_id,
+            RunORM.user_id == user.identity,
+        )
+    )
+    if not run_orm:
+        raise HTTPException(404, f"Run '{run_id}' not found")
+
+    # Handle interruption/cancellation
+    # Validate status conforms to API specification
+    validated_status = validate_run_status(request.status)
+
+    if validated_status == "interrupted":
+        logger.info(f"[update_run] cancelling/interrupting run_id={run_id} user={user.identity} thread_id={thread_id}")
+        await _request_run_interruption(session, run_orm, "interrupt")
+
+    # Return final run state
+    await session.refresh(run_orm)
+    return Run.model_validate(run_orm)
+
+
+@router.get("/threads/{thread_id}/runs/{run_id}/join", responses={**NOT_FOUND})
+async def join_run(
+    thread_id: str,
+    run_id: str,
+    user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """Wait for a run to complete and return its output.
+
+    Returns a chunked ``application/json`` response. While the run is still
+    executing, the server sends periodic ``\\n`` heartbeat bytes to keep the
+    connection alive through proxies and load balancers (AWS ALB, Cloudflare,
+    etc.). The final chunk is the JSON result. Leading whitespace is ignored
+    by JSON parsers, so clients can parse the concatenated body normally.
+
+    If the run is already in a terminal state, the output is returned
+    immediately with no heartbeat overhead.
+
+    Sessions are managed manually (not via ``Depends``) to avoid holding a
+    pool connection during the long wait.
+    """
+    maker = _get_session_maker()
+
+    # Short-lived session: validate run exists and check terminal state
+    async with maker() as session:
+        run_orm = await session.scalar(
+            select(RunORM).where(
+                RunORM.run_id == str(run_id),
+                RunORM.thread_id == thread_id,
+                RunORM.user_id == user.identity,
+            )
+        )
+        if not run_orm:
+            raise HTTPException(404, f"Run '{run_id}' not found")
+
+        if run_orm.status in TERMINAL_STATES:
+            return StreamingResponse(
+                iter([encode_output(run_orm.output or {})]),
+                media_type="application/json",
+            )
+
+    return StreamingResponse(
+        heartbeat_wait_body(
+            run_id,
+            thread_id,
+            user.identity,
+            timeout=settings.worker.BG_JOB_TIMEOUT_SECS,
+        ),
+        media_type="application/json",
+        headers={
+            "Location": f"/threads/{thread_id}/runs/{run_id}/join",
+            "Content-Location": f"/threads/{thread_id}/runs/{run_id}",
+        },
+    )
+
+
+@router.post("/threads/{thread_id}/runs/wait", responses={**NOT_FOUND, **CONFLICT})
+async def wait_for_run(
+    thread_id: str,
+    request: RunCreate,
+    user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """Create a run, execute it, and wait for completion.
+
+    Returns a chunked ``application/json`` response with periodic ``\\n``
+    heartbeat bytes to keep the connection alive. The final chunk is the
+    JSON result. Uses ``BG_JOB_TIMEOUT_SECS`` (default 1 hour) as the
+    safety-net timeout.
+
+    Sessions are managed manually (not via ``Depends``) to avoid holding a
+    pool connection during the long wait.
+    """
+    maker = _get_session_maker()
+
+    # Session block: all pre-execution DB work (validate, create run, submit)
+    async with maker() as session:
+        existing_thread = await session.scalar(select(ThreadORM).where(ThreadORM.thread_id == thread_id))
+        if existing_thread and existing_thread.user_id != user.identity:
+            raise HTTPException(404, f"Thread '{thread_id}' not found")
+
+        await _apply_create_run_auth(user, thread_id, request)
+
+        run_id, _run, _job = await _prepare_run(session, thread_id, request, user, initial_status="pending")
+
+    # No pool connection held from here — safe for long waits
+    return StreamingResponse(
+        heartbeat_wait_body(
+            run_id,
+            thread_id,
+            user.identity,
+            timeout=settings.worker.BG_JOB_TIMEOUT_SECS,
+        ),
+        media_type="application/json",
+        headers={
+            "Location": f"/threads/{thread_id}/runs/{run_id}/join",
+            "Content-Location": f"/threads/{thread_id}/runs/{run_id}",
+        },
+    )
+
+
+@router.get("/threads/{thread_id}/runs/{run_id}/stream", responses={**SSE_RESPONSE, **NOT_FOUND})
+async def stream_run(
+    thread_id: str,
+    run_id: str,
+    last_event_id: str | None = Header(None, alias="Last-Event-ID"),
+    _stream_mode: str | None = Query(None, description="Override the stream mode for this connection."),
+    user: User = Depends(get_current_user),
+) -> EventSourceResponse:
+    """Stream an existing run's execution via SSE.
+
+    Attach to a run that was created without streaming (e.g. via the create
+    endpoint) to receive its events in real time. If the run has already
+    finished, a single `end` event is emitted. Use the `Last-Event-ID`
+    header to resume from a specific event after a disconnect.
+
+    A periodic SSE keepalive comment is sent every
+    ``KEEPALIVE_INTERVAL_SECS`` so idle proxies don't drop attached streams.
+    """
+    maker = _get_session_maker()
+    async with maker() as session:
+        logger.info(f"[stream_run] fetch for stream run_id={run_id} thread_id={thread_id} user={user.identity}")
+        run_orm = await session.scalar(
+            select(RunORM).where(
+                RunORM.run_id == str(run_id),
+                RunORM.thread_id == thread_id,
+                RunORM.user_id == user.identity,
+            )
+        )
+        if not run_orm:
+            raise HTTPException(404, f"Run '{run_id}' not found")
+
+        logger.info(f"[stream_run] status={run_orm.status} user={user.identity} thread_id={thread_id} run_id={run_id}")
+        run_status = run_orm.status
+        run_model = Run.model_validate(run_orm)
+    # No client_close_handler_callable: this is a reconnect-style endpoint, so
+    # a single client disconnecting must not cancel the shared run — other
+    # consumers may still be attached via /join or another /stream.
+    # If already terminal and no Last-Event-ID, just emit end.
+    # If Last-Event-ID is present, fall through to stream_run_execution
+    # which will replay missed events from the buffer before ending.
+    if run_status in TERMINAL_STATES and not last_event_id:
+        final_status = "error" if run_status == "error" else run_status
+
+        async def generate_final() -> AsyncGenerator[str, None]:
+            yield create_end_event(status=final_status)
+
+        logger.info(f"[stream_run] starting terminal stream run_id={run_id} status={run_status}")
+        return make_sse_response(
+            sse_to_bytes(generate_final()),
+            headers={
+                **get_sse_headers(),
+                "Location": f"/threads/{thread_id}/runs/{run_id}/stream",
+                "Content-Location": f"/threads/{thread_id}/runs/{run_id}",
+            },
+        )
+
+    # Stream active or pending runs via broker
+
+    return make_sse_response(
+        sse_to_bytes(streaming_service.stream_run_execution(run_model, last_event_id)),
+        headers={
+            **get_sse_headers(),
+            "Location": f"/threads/{thread_id}/runs/{run_id}/stream",
+            "Content-Location": f"/threads/{thread_id}/runs/{run_id}",
+        },
+    )
+
+
+@router.post(
+    "/threads/{thread_id}/runs/{run_id}/cancel",
+    response_model=Run,
+    responses={**NOT_FOUND},
+)
+async def cancel_run_endpoint(
+    thread_id: str,
+    run_id: str,
+    wait: int = Query(
+        0,
+        ge=0,
+        le=1,
+        description="Set to 1 to wait up to 10 seconds for the run task to settle before returning.",
+    ),
+    action: RunCancellationAction = Query(
+        "cancel",
+        description="Cancellation strategy: 'cancel' for hard cancel, 'interrupt' for cooperative interrupt.",
+    ),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Run:
+    """Cancel or interrupt a running execution.
+
+    Use `action=cancel` to hard-cancel the run immediately, or
+    `action=interrupt` to cooperatively interrupt (the graph can handle the
+    interrupt and save partial state). Set `wait=1` to wait up to 10 seconds
+    for the background task to settle before returning the updated run. The
+    response may still report `pending` or `running` if the timeout expires.
+    Without `wait=1`, a live-owned run is cancelled asynchronously, so the
+    response may still report `pending` or `running`.
+    """
+    logger.info(f"[cancel_run] fetch run run_id={run_id} thread_id={thread_id} user={user.identity}")
+    run_orm = await session.scalar(
+        select(RunORM).where(
+            RunORM.run_id == run_id,
+            RunORM.thread_id == thread_id,
+            RunORM.user_id == user.identity,
+        )
+    )
+    if not run_orm:
+        raise HTTPException(404, f"Run '{run_id}' not found")
+
+    logger.info(f"[cancel_run] request {action} run_id={run_id} user={user.identity} thread_id={thread_id}")
+    await _request_run_interruption(session, run_orm, action)
+
+    # Optionally wait for the run to settle
+    if wait:
+        # Poll DB until the run reaches a terminal state (or 10s timeout).
+        for _ in range(20):
+            await asyncio.sleep(0.5)
+            session.expire_all()  # sync method, clears cache
+            fresh = await session.scalar(select(RunORM).where(RunORM.run_id == run_id))
+            if fresh and fresh.status in TERMINAL_STATES:
+                break
+
+    await session.refresh(run_orm)
+    return Run.model_validate(run_orm)
+
+
+@router.delete(
+    "/threads/{thread_id}/runs/{run_id}",
+    status_code=204,
+    responses={**NOT_FOUND, **CONFLICT},
+)
+async def delete_run(
+    thread_id: str,
+    run_id: str,
+    force: int = Query(0, ge=0, le=1, description="Set to 1 to cancel an active run before deleting it."),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Delete a run record.
+
+    If the run is active (pending or running) and `force=0`, returns 409
+    Conflict. Set `force=1` to cancel the run first (best-effort) and then
+    delete it. Returns 204 No Content on success.
+    """
+    # Deleting a run authorizes as a thread delete (Agent Protocol has no `runs`
+    # resource); @auth.on.threads.delete covers it.
+    ctx = build_auth_context(user, "threads", "delete")
+    value = {"run_id": run_id, "thread_id": thread_id}
+    await handle_event(ctx, value)
+    logger.info(f"[delete_run] fetch run run_id={run_id} thread_id={thread_id} user={user.identity}")
+    run_orm = await session.scalar(
+        select(RunORM).where(
+            RunORM.run_id == str(run_id),
+            RunORM.thread_id == thread_id,
+            RunORM.user_id == user.identity,
+        )
+    )
+    if not run_orm:
+        raise HTTPException(404, f"Run '{run_id}' not found")
+
+    # If active and not forcing, reject deletion
+    if run_orm.status in ["pending", "running"] and not force:
+        raise HTTPException(
+            status_code=409,
+            detail="Run is active. Retry with force=1 to cancel and delete.",
+        )
+
+    # If forcing and active, cancel first
+    if force and run_orm.status in ["pending", "running"]:
+        logger.info(f"[delete_run] force-cancelling active run run_id={run_id}")
+        await streaming_service.cancel_run(run_id)
+        # Best-effort: wait for bg task to settle
+        task = active_runs.get(run_id)
+        if task:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+
+    # Delete the record
+    await session.execute(
+        delete(RunORM).where(
+            RunORM.run_id == str(run_id),
+            RunORM.thread_id == thread_id,
+            RunORM.user_id == user.identity,
+        )
+    )
+    await session.commit()
+
+    # Clean up active task if exists
+    task = active_runs.pop(run_id, None)
+    if task and not task.done():
+        task.cancel()
+
+    # 204 No Content
+    return

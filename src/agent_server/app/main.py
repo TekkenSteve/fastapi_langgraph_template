@@ -1,0 +1,404 @@
+"""FastAPI application assembly (composition root)."""
+
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any
+
+import structlog
+from asgi_correlation_id import CorrelationIdMiddleware
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute, APIRouter
+
+from agent_server import __version__
+from agent_server.app.app_loader import load_custom_app
+from agent_server.app.route_merger import (
+    merge_exception_handlers,
+    merge_lifespans,
+)
+from agent_server.auth.deps import auth_dependency
+from agent_server.auth.enforcement import apply_auth_enforcement
+from agent_server.config.graph_config import CorsConfig, HttpConfig, get_config_dir, load_http_config
+from agent_server.config.settings import settings
+from agent_server.controller.http.middleware import ContentTypeFixMiddleware, StructLogMiddleware
+from agent_server.controller.http.routers.assistants import router as assistants_router
+from agent_server.controller.http.routers.crons import router as crons_router
+from agent_server.controller.http.routers.event_streaming import router as event_streaming_router
+from agent_server.controller.http.routers.health import router as health_router
+from agent_server.controller.http.routers.runs import router as runs_router
+from agent_server.controller.http.routers.stateless_runs import router as stateless_runs_router
+from agent_server.controller.http.routers.store import router as store_router
+from agent_server.controller.http.routers.threads import router as threads_router
+from agent_server.domain.errors import AgentProtocolError, get_error_type
+from agent_server.infra.logging import setup_logging
+from agent_server.infra.observability.metrics import setup_prometheus_metrics
+from agent_server.infra.observability.setup import setup_observability
+from agent_server.infra.redis import redis_manager
+from agent_server.repo.database import db_manager
+from agent_server.repo.graphs.langgraph_service import get_langgraph_service
+from agent_server.repo.migrations import run_migrations_async
+from agent_server.usecase.cron.scheduler import cron_scheduler
+from agent_server.usecase.execution.executor import executor
+from agent_server.usecase.execution.lease_reaper import lease_reaper
+from agent_server.usecase.streaming.broker import broker_manager
+from agent_server.usecase.thread_ttl import get_thread_ttl_config, thread_ttl_sweeper
+
+OPENAPI_TAGS: list[dict[str, Any]] = [
+    {"name": "Assistants", "description": "A configured instance of a graph."},
+    {"name": "Threads", "description": "Accumulated state and outputs from a group of runs."},
+    {"name": "Thread Runs", "description": "Invoke a graph on a thread, updating its persistent state."},
+    {"name": "Stateless Runs", "description": "Invoke a graph without state or memory persistence."},
+    {"name": "Crons", "description": "Scheduled recurring runs on a cron schedule."},
+    {"name": "Store", "description": "Persistent key-value and semantic storage available from any thread."},
+    {"name": "Event Streaming", "description": "Agent Protocol v2 thread event streaming and commands."},
+    {"name": "Health", "description": "Server health checks and service information."},
+]
+
+setup_logging()
+logger = structlog.getLogger(__name__)
+
+# Default CORS headers required for LangGraph SDK stream reconnection
+DEFAULT_EXPOSE_HEADERS = ["Content-Location", "Location"]
+
+
+def _log_connection_help(error: Exception) -> None:
+    """Log a helpful error message when database connection fails."""
+    logger.error(
+        "Could not connect to PostgreSQL",
+        error=str(error),
+        hint="Check your database configuration and ensure PostgreSQL is running.",
+    )
+    logger.error(
+        "Troubleshooting tips:\n"
+        "  - Local development?  Run 'make dev' (starts PostgreSQL + hot-reload server)\n"
+        "  - Docker deployment?  Run 'docker compose up -d' (starts PostgreSQL + app)\n"
+        "  - External database?  Check DATABASE_URL or POSTGRES_* vars in your .env\n"
+        "  - Missing .env file?  Copy .env.example to .env and configure it"
+    )
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """FastAPI lifespan context manager for startup/shutdown"""
+    # Multi-pod K8s: set RUN_MIGRATIONS_ON_STARTUP=false + run `make migrate-up`
+    # out-of-band.
+    if settings.app.RUN_MIGRATIONS_ON_STARTUP:
+        try:
+            await run_migrations_async()
+        except (ConnectionRefusedError, OSError) as e:
+            _log_connection_help(e)
+            raise
+    else:
+        logger.info("skipping startup migrations (RUN_MIGRATIONS_ON_STARTUP=false)")
+
+    # Startup: Initialize database and LangGraph components
+    try:
+        await db_manager.initialize()
+    except (ConnectionRefusedError, OSError) as e:
+        _log_connection_help(e)
+        raise
+
+    # Observability
+    setup_observability()
+
+    # Initialize LangGraph service
+    langgraph_service = get_langgraph_service()
+    await langgraph_service.initialize()
+
+    # Initialize Redis broker (if enabled)
+    if settings.redis.REDIS_BROKER_ENABLED:
+        try:
+            await redis_manager.initialize()
+        except (ConnectionError, OSError) as e:
+            logger.error(
+                "Cannot connect to Redis. "
+                "Set REDIS_BROKER_ENABLED=false for single-instance mode without Redis, "
+                "or ensure Redis is running at REDIS_URL.",
+                redis_url=settings.redis.REDIS_URL,
+                error=str(e),
+            )
+            raise
+    else:
+        logger.warning(
+            "Running without Redis broker. Background runs have no crash recovery "
+            "or horizontal scaling. Set REDIS_BROKER_ENABLED=true and configure "
+            "REDIS_URL for production use.",
+        )
+
+    # Start broker manager (cleanup task for in-memory, cancel listener for Redis)
+    await broker_manager.start()
+
+    # Start executor (spawns worker coroutines when Redis is enabled)
+    await executor.start()
+
+    # Start lease reaper (recovers crashed worker runs, Redis mode only)
+    if settings.redis.REDIS_BROKER_ENABLED:
+        await lease_reaper.start()
+
+    # Start cron scheduler (fires due cron jobs)
+    if settings.cron.CRON_ENABLED:
+        await cron_scheduler.start()
+
+    # Start thread TTL sweeper (deletes/compacts expired threads); resolving
+    # the config here also fails fast on an invalid retention policy.
+    if get_thread_ttl_config() is not None:
+        await thread_ttl_sweeper.start()
+
+    yield
+
+    # Shutdown order: ttl sweeper → cron → reaper → executor (drains jobs) → broker → Redis → DB
+    if get_thread_ttl_config() is not None:
+        await thread_ttl_sweeper.stop()
+    if settings.cron.CRON_ENABLED:
+        await cron_scheduler.stop()
+    if settings.redis.REDIS_BROKER_ENABLED:
+        await lease_reaper.stop()
+    await executor.stop()
+    await broker_manager.stop()
+
+    # Close Redis broker (if enabled)
+    if settings.redis.REDIS_BROKER_ENABLED:
+        await redis_manager.close()
+
+    await db_manager.close()
+
+
+# Define core exception handlers
+async def agent_protocol_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:
+    """Convert HTTP exceptions to Agent Protocol error format"""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=AgentProtocolError(
+            error=get_error_type(exc.status_code),
+            message=exc.detail,
+            details=getattr(exc, "details", None),
+        ).model_dump(),
+    )
+
+
+async def general_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
+    """Handle unexpected exceptions"""
+    return JSONResponse(
+        status_code=500,
+        content=AgentProtocolError(
+            error="internal_error",
+            message="An unexpected error occurred",
+            details=None,  # FIX: do not leak internal exception details
+        ).model_dump(),
+    )
+
+
+exception_handlers = {
+    HTTPException: agent_protocol_exception_handler,
+    Exception: general_exception_handler,
+}
+
+
+# Define root endpoint handler
+async def root_handler() -> dict[str, str]:
+    """Root endpoint"""
+    return {
+        "message": settings.app.PROJECT_NAME,
+        "version": __version__,
+        "status": "running",
+    }
+
+
+def _apply_auth_to_routes(app: FastAPI, auth_deps: list[Any]) -> None:
+    """Apply auth dependency to all existing routes in the FastAPI app.
+
+    This function recursively processes all routes including nested routers,
+    adding the auth dependency to each route that doesn't already have it.
+    Auth dependencies are prepended to ensure they run first (fail-fast).
+
+    Args:
+        app: FastAPI application instance
+        auth_deps: List of dependencies to apply (e.g., [Depends(require_auth)])
+    """
+
+    def process_routes(routes: list) -> None:
+        """Recursively process routes and nested routers."""
+        for route in routes:
+            if isinstance(route, APIRoute):
+                # Add auth dependency if not already present
+                existing_deps = list(route.dependencies or [])
+                # Check if auth dependency is already present
+                auth_dep_ids = {id(dep) for dep in auth_deps}
+                existing_dep_ids = {id(dep) for dep in existing_deps}
+                if not auth_dep_ids.intersection(existing_dep_ids):
+                    # Prepend auth deps so they run first (fail-fast)
+                    route.dependencies = auth_deps + existing_deps
+            elif isinstance(route, APIRouter):
+                # Process nested router
+                process_routes(route.routes)
+            elif hasattr(route, "routes"):
+                # Handle other route types that have nested routes
+                process_routes(route.routes)
+
+    process_routes(app.routes)
+    logger.info("Applied authentication dependency to custom routes")
+
+
+def _add_cors_middleware(app: FastAPI, cors_config: CorsConfig | None) -> None:
+    """Add CORS middleware with config or defaults.
+
+    When ``allow_origins`` is ``["*"]`` (the default), ``allow_credentials``
+    defaults to ``False`` because the combination of a wildcard origin with
+    credentials is insecure — it allows any site to make credentialed requests.
+    To enable ``allow_credentials``, specify concrete origins.
+
+    Args:
+        app: FastAPI application instance
+        cors_config: CORS configuration dict or None for defaults
+    """
+    if cors_config:
+        origins = cors_config.get("allow_origins", ["*"])
+        credentials = cors_config.get(
+            "allow_credentials",
+            origins not in (["*"], "*"),
+        )
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials=credentials,
+            allow_methods=cors_config.get("allow_methods", ["*"]),
+            allow_headers=cors_config.get("allow_headers", ["*"]),
+            expose_headers=cors_config.get("expose_headers", DEFAULT_EXPOSE_HEADERS),
+            max_age=cors_config.get("max_age", 600),
+        )
+    else:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=False,
+            allow_methods=["*"],
+            allow_headers=["*"],
+            expose_headers=DEFAULT_EXPOSE_HEADERS,
+        )
+
+
+def _add_common_middleware(app: FastAPI, cors_config: CorsConfig | None) -> None:
+    """Add common middleware stack in correct order.
+
+    Middleware runs in reverse registration order, so we register:
+    1. ContentTypeFixMiddleware (outermost - fixes text/plain → application/json)
+    2. CORSMiddleware (handles preflight early)
+    3. CorrelationIdMiddleware (adds request ID)
+    4. StructLogMiddleware (innermost - logs with correlation ID)
+
+    Args:
+        app: FastAPI application instance
+        cors_config: CORS configuration dict or None for defaults
+    """
+    app.add_middleware(StructLogMiddleware)
+    app.add_middleware(CorrelationIdMiddleware)
+    _add_cors_middleware(app, cors_config)
+    app.add_middleware(ContentTypeFixMiddleware)
+
+
+def _include_core_routers(app: FastAPI) -> None:
+    """Include all core API routers with auth dependency.
+
+    Routers are included in consistent order:
+    1. Health (no auth)
+    2. Assistants (with auth)
+    3. Threads (with auth)
+    4. Runs (with auth)
+    5. Stateless Runs (with auth)
+    6. Crons (with auth)
+    7. Store (with auth)
+
+    Args:
+        app: FastAPI application instance
+    """
+    app.include_router(health_router)
+    app.include_router(assistants_router)
+    app.include_router(threads_router)
+    app.include_router(runs_router)
+    app.include_router(stateless_runs_router)
+    app.include_router(crons_router)
+    app.include_router(store_router)
+    app.include_router(event_streaming_router)
+
+    # Attach @auth.on dispatch from the route registry. Routes must opt out
+    # explicitly; forgetting the in-body call no longer disables authorization.
+    apply_auth_enforcement(app)
+
+
+def create_app() -> FastAPI:
+    """Create and configure the FastAPI application.
+
+    Returns:
+        Configured FastAPI application instance
+    """
+    http_config: HttpConfig | None = load_http_config()
+    cors_config: CorsConfig | None = http_config.get("cors") if http_config else None
+
+    # Try to load custom app if configured
+    user_app = None
+    if http_config and http_config.get("app"):
+        try:
+            config_dir = get_config_dir()
+            user_app = load_custom_app(http_config["app"], base_dir=config_dir)
+            logger.info("Custom app loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to load custom app: {e}", exc_info=True)
+            raise
+
+    if user_app:
+        if not isinstance(user_app, FastAPI):
+            raise TypeError(
+                "Custom apps must be FastAPI applications. Use: from fastapi import FastAPI; app = FastAPI()"
+            )
+
+        application = user_app
+        if not application.openapi_tags:
+            application.openapi_tags = OPENAPI_TAGS
+        _include_core_routers(application)
+
+        # Add root endpoint if not already defined
+        if not any(route.path == "/" for route in application.routes if hasattr(route, "path")):
+            application.get("/")(root_handler)
+
+        application = merge_lifespans(application, lifespan)
+        application = merge_exception_handlers(application, exception_handlers)
+        _add_common_middleware(application, cors_config)
+
+        # Apply auth to custom routes if enabled
+        if http_config and http_config.get("enable_custom_route_auth", False):
+            _apply_auth_to_routes(application, auth_dependency)
+    else:
+        application = FastAPI(
+            title=settings.app.PROJECT_NAME,
+            description="Production-ready Agent Protocol server",
+            version=settings.app.VERSION,
+            debug=settings.app.DEBUG,
+            docs_url="/docs",
+            redoc_url="/redoc",
+            lifespan=lifespan,
+            openapi_tags=OPENAPI_TAGS,
+        )
+
+        _add_common_middleware(application, cors_config)
+        _include_core_routers(application)
+
+        for exc_type, handler in exception_handlers.items():
+            application.exception_handler(exc_type)(handler)
+
+        application.get("/")(root_handler)
+
+    setup_prometheus_metrics(application)
+
+    return application
+
+
+# Create application instance
+app = create_app()
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    port = int(settings.app.PORT)
+    uvicorn.run(app, host=settings.app.HOST, port=port)  # nosec B104 - binding to all interfaces is intentional
