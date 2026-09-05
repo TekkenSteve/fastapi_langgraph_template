@@ -1,6 +1,7 @@
 """Loading and typed access for the langgraph.json graph/config file."""
 
 import json
+import sys
 from pathlib import Path
 from typing import TypedDict
 
@@ -246,3 +247,25 @@ def get_config_dir() -> Path | None:
     if config_path and config_path.exists():
         return config_path.parent.resolve()
     return None
+
+
+def add_dependency_paths(dependencies: list[str], config_dir: Path) -> None:
+    """Add config `dependencies` paths to sys.path so user packages import.
+
+    Shared by graph loading (LangGraphService) and custom app/auth loading
+    (app.main) — both need user imports resolvable before loading code.
+    """
+    # Reverse so the first dependency in config has highest priority
+    for dep in reversed(dependencies):
+        dep_path = Path(dep)
+        if not dep_path.is_absolute():
+            dep_path = (config_dir / dep_path).resolve()
+        else:
+            dep_path = dep_path.resolve()
+
+        path_str = str(dep_path)
+        if dep_path.exists() and path_str not in sys.path:
+            sys.path.insert(0, path_str)
+            logger.info(f"Added dependency path to sys.path: {path_str}")
+        elif not dep_path.exists():
+            logger.warning(f"Dependency path does not exist: {path_str}")

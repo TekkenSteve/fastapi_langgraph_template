@@ -21,9 +21,22 @@ from agent_server.auth.registry import (
 # Methods that never carry a body-bearing authorization decision.
 _IGNORED_METHODS = frozenset({"HEAD", "OPTIONS"})
 
-# User-defined routes from a custom app are governed by `enable_custom_route_auth`,
-# not by the protocol registry. Only the server's own surface is checked here.
-_CUSTOM_ROUTE_PREFIXES = ("/custom",)
+
+def _custom_route_paths() -> frozenset[str]:
+    """Paths contributed by the user's custom app (http.app in langgraph.json).
+
+    User-defined routes are governed by `enable_custom_route_auth`, not by the
+    protocol registry, so the coverage check must exclude exactly the routes
+    the custom app mounted — structurally, not by hardcoded path prefixes.
+    """
+    from agent_server.app.app_loader import load_custom_app
+    from agent_server.config.graph_config import get_config_dir, load_http_config
+
+    http_config = load_http_config()
+    if not http_config or not http_config.get("app"):
+        return frozenset()
+    user_app = load_custom_app(http_config["app"], base_dir=get_config_dir())
+    return frozenset(route.path for route in user_app.routes if isinstance(route, APIRoute))
 
 
 def _protocol_routes() -> list[tuple[str, str]]:
@@ -53,7 +66,8 @@ def _protocol_routes() -> list[tuple[str, str]]:
                 walk(list(route.routes))
 
     walk(list(app.routes))
-    return [(method, path) for method, path in collected if not path.startswith(_CUSTOM_ROUTE_PREFIXES)]
+    custom_paths = _custom_route_paths()
+    return [(method, path) for method, path in collected if path not in custom_paths]
 
 
 def test_every_mounted_route_is_registered_or_exempt() -> None:

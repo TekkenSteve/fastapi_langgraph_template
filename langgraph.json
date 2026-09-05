@@ -1,19 +1,14 @@
 {
   "dependencies": [
-    "./src/graphs"
+    "./src/graphs",
+    "./src"
   ],
   "graphs": {
-    "agent": "./src/graphs/react_agent/graph.py:graph",
-    "agent_hitl": "./src/graphs/react_agent_hitl/graph.py:graph",
-    "subgraph_agent": "./src/graphs/subgraph_agent/graph.py:graph",
-    "subgraph_hitl_agent": "./src/graphs/subgraph_hitl_agent/graph.py:graph",
-    "factory": "./src/graphs/factory/graph.py:graph",
-    "cron_example": "./src/graphs/cron_example/graph.py:graph",
-    "stress_test": "./src/graphs/stress_test/graph.py:graph",
-    "stress_tool_agent": "./src/graphs/stress_tool_agent/graph.py:graph"
+    "shopping_agent": "./src/graphs/shopping_agent/graph.py:graph",
+    "research_agent": "./src/graphs/research_agent/graph.py:graph"
   },
   "http": {
-    "app": "./src/graphs/custom_routes_example.py:app"
+    "app": "./src/shop/api.py:app"
   },
   "store": {
     "scopes": {

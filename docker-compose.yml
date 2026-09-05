@@ -46,7 +46,6 @@ services:
     volumes:
       - ./langgraph.json:/app/langgraph.json:ro
       - ./src:/app/src:ro  # Mount full src for PYTHONPATH to work
-      - ./migrations:/app/migrations:ro # for migrations
     command: ["uvicorn", "agent_server.app.main:app", "--host", "0.0.0.0", "--port", "${PORT:-2026}", "--reload"]
 
   # Redis - enables multi-instance SSE streaming with pub/sub + replay

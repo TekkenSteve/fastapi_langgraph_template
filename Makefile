@@ -48,10 +48,10 @@ security:
 	uv run bandit -c pyproject.toml -r src/agent_server/
 
 test:
-	uv run pytest tests/unit tests/integration
+	uv run pytest tests/unit tests/integration tests/graphs tests/shop
 
 test-cov:
-	uv run pytest tests/unit tests/integration --cov=src/agent_server --cov-report=html --cov-report=term
+	uv run pytest tests/unit tests/integration tests/graphs tests/shop --cov=src/agent_server --cov=src/graphs --cov-report=html --cov-report=term
 
 deps:
 	docker compose up -d postgres redis
@@ -72,10 +72,10 @@ run:
 	uv run uvicorn --env-file .env agent_server.app.main:app --reload --host 0.0.0.0 --port 2026
 
 migrate-create:
-	uv run alembic revision --autogenerate -m "$(MSG)"
+	cd src/agent_server && uv run alembic -c alembic.ini revision --autogenerate -m "$(MSG)"
 
 migrate-up:
-	uv run alembic upgrade head
+	cd src/agent_server && uv run alembic -c alembic.ini upgrade head
 
 ci-check: format lint
 	-uv run ty check src/agent_server/
@@ -88,37 +88,37 @@ E2E_IGNORE := --ignore=tests/e2e/manual_auth_tests --ignore=tests/e2e/multi_inst
 
 e2e-dev:
 	@echo "Starting dev mode (LocalExecutor, no Redis)..."
-	@docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+	@docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.e2e.yml up -d
 	@echo "Waiting for server..."; \
 	ready=0; \
 	for i in $$(seq 1 30); do \
 		if curl -s http://localhost:2026/health > /dev/null 2>&1; then ready=1; break; fi; \
 		sleep 2; \
 	done; \
-	if [ "$$ready" = "0" ]; then echo "Server failed to start within 60s"; docker compose -f docker-compose.yml -f docker-compose.dev.yml down; exit 1; fi
+	if [ "$$ready" = "0" ]; then echo "Server failed to start within 60s"; docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.e2e.yml down; exit 1; fi
 	@rc=0; \
 	uv run pytest tests/e2e/ -m "not prod_only" $(E2E_IGNORE) -v --tb=short || rc=$$?; \
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml down; \
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.e2e.yml down; \
 	exit $$rc
 
 e2e-prod:
 	@echo "Starting prod mode (WorkerExecutor + Redis)..."
-	@docker compose up -d
+	@docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d
 	@echo "Waiting for server..."; \
 	ready=0; \
 	for i in $$(seq 1 30); do \
 		if curl -s http://localhost:2026/health > /dev/null 2>&1; then ready=1; break; fi; \
 		sleep 2; \
 	done; \
-	if [ "$$ready" = "0" ]; then echo "Server failed to start within 60s"; docker compose down; exit 1; fi
+	if [ "$$ready" = "0" ]; then echo "Server failed to start within 60s"; docker compose -f docker-compose.yml -f docker-compose.e2e.yml down; exit 1; fi
 	@rc=0; \
 	uv run pytest tests/e2e/ $(E2E_IGNORE) -v --tb=short || rc=$$?; \
-	docker compose down; \
+	docker compose -f docker-compose.yml -f docker-compose.e2e.yml down; \
 	exit $$rc
 
 e2e-auth:
 	@echo "Starting auth mode (JWT mock auth, LocalExecutor)..."
-	@docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.auth.yml up -d postgres app
+	@docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.e2e.yml -f docker-compose.auth.yml up -d postgres app
 	@echo "Waiting for server..."; \
 	ready=0; \
 	for i in $$(seq 1 45); do \
@@ -127,13 +127,13 @@ e2e-auth:
 	done; \
 	if [ "$$ready" = "0" ]; then \
 		echo "Server failed to start within 90s"; \
-		docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.auth.yml logs --tail=80; \
-		docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.auth.yml down; \
+		docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.e2e.yml -f docker-compose.auth.yml logs --tail=80; \
+		docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.e2e.yml -f docker-compose.auth.yml down; \
 		exit 1; \
 	fi
 	@rc=0; \
 	uv run pytest tests/e2e/manual_auth_tests/ -v --tb=short -m auth_only -o addopts="--strict-markers -ra --color=yes" || rc=$$?; \
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.auth.yml down; \
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.e2e.yml -f docker-compose.auth.yml down; \
 	exit $$rc
 
 e2e-both: e2e-dev e2e-prod

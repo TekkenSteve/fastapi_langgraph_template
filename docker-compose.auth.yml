@@ -20,9 +20,10 @@ services:
       - GRAPHS_CONFIG=/app/langgraph.auth.json
       - REDIS_BROKER_ENABLED=false
       - POSTGRES_HOST=postgres
-      - PYTHONPATH=/app/src:/app/src/graphs
+      - PYTHONPATH=/app/src:/app/tests/e2e/graphs
     volumes:
       - ./langgraph.auth.json:/app/langgraph.auth.json:ro
+      - ./tests/e2e/graphs:/app/tests/e2e/graphs:ro
     depends_on: !override
       postgres:
         condition: service_healthy

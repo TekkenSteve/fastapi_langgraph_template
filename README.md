@@ -40,29 +40,28 @@ curl -s http://localhost:2026/info
 
 ```
 ├── src/
-│   ├── graphs/              # ★ Your agents live here (registered in langgraph.json)
-│   │   ├── react_agent/     #   static compiled graph (ReAct + tools)
-│   │   ├── react_agent_hitl/ #  human-in-the-loop example
-│   │   ├── subgraph_agent/  #   subgraph composition
-│   │   ├── factory/         #   per-request factory graph (receives user/config)
-│   │   ├── cron_example/    #   graph designed for cron-triggered runs
-│   │   ├── custom_routes_example.py   # add your own FastAPI routes
-│   │   └── jwt_mock_auth_example.py   # auth reference implementation
+│   ├── graphs/              # ★ Your agents live here — see src/graphs/README.md
+│   │   ├── shopping_agent/  #   canonical paradigm-A package (gates, HITL, memory, subgraphs)
+│   │   ├── research_agent/  #   canonical paradigm-B package (composed agent via deepagents)
+│   │   └── shared/          #   cross-graph capability library (models, tools, middleware)
 │   │
+│   ├── shop/          #   domain package example: backend port + REST surface (api.py)
 │   └── agent_server/        # ★ The server (rarely needs changes)
 │   ├── app/                 #   composition root: create_app(), lifespan, wiring
 │   ├── config/              #   pydantic-settings groups + langgraph.json loading
 │   ├── domain/              #   Agent Protocol models (Assistant, Thread, Run, …)
-│   ├── repo/                #   persistence: db pools, ORM, migrations, graph registry
+│   ├── repo/                #   persistence: db pools, ORM, migration runner, graph registry
 │   ├── usecase/             #   business logic: execution/, streaming/, cron/, services
 │   ├── controller/http/     #   routers/ (Agent Protocol endpoints) + middleware/
 │   ├── auth/                #   pluggable authn/authz subsystem
 │   └── infra/               #   redis, SSE primitives, observability, logging
 │
-├── migrations/              # Alembic versions (auto-applied on startup)
-├── tests/                   # unit / integration / e2e, mirroring the src layers
+├── tests/                   # unit / integration / graphs / e2e, mirroring the src layers
+│   └── e2e/graphs/          #   carrier graphs that exercise the server (not user examples)
 ├── deployments/docker/      # production Dockerfile
-├── langgraph.json           # graph registry + http/auth/store config
+├── langgraph.json           # graph registry + http/auth/store config (canonical graphs only)
+├── langgraph.e2e.json       # e2e registry: canonical + carrier graphs (used by make e2e-*)
+├── langgraph.auth.json      # auth-mode registry (JWT mock)
 ├── docker-compose.yml       # prod mode (Redis workers)
 ├── docker-compose.dev.yml   # dev override (no Redis)
 ├── docker-compose.auth.yml  # auth override (JWT mock)
@@ -88,9 +87,9 @@ Two files:
 {
   "dependencies": ["./graphs"],
   "graphs": {
-    "agent": "./src/graphs/react_agent/graph.py:graph"
+    "shopping_agent": "./src/graphs/shopping_agent/graph.py:graph"
   },
-  "http": { "app": "./src/graphs/custom_routes_example.py:app" },
+  "http": { "app": "./src/graphs/shopping_agent/http.py:app" },
   "store": { "scopes": { "orgs": ["org_id"] } }
 }
 ```
@@ -113,7 +112,7 @@ Two files:
 
 ### Add a new graph
 
-1. Create `src/graphs/my_agent/graph.py`, export a compiled `graph` (or a factory function — see `src/graphs/factory/`).
+1. Create `src/graphs/my_agent/` following the canonical layout in `src/graphs/README.md` — `graph.py` exports a compiled `graph` (or a factory function for per-request builds).
 2. Register it in `langgraph.json`: `"my_agent": "./src/graphs/my_agent/graph.py:graph"`.
 3. Restart — a default assistant is auto-created with a deterministic UUID derived from the graph id.
 
@@ -124,13 +123,15 @@ Two files:
 3. Business logic in `src/agent_server/usecase/`.
 4. Register the router in `src/agent_server/app/main.py` (`_include_core_routers`).
 
-Prefer keeping your own endpoints **outside** the server package: point `http.app` in `langgraph.json` at your own FastAPI app (see `src/graphs/custom_routes_example.py`) and it gets merged — routes, lifespan, exception handlers, middleware.
+Prefer keeping your own endpoints **outside** the server package: point `http.app` in `langgraph.json` at your own FastAPI app (see `src/graphs/shopping_agent/http.py`) and it gets merged — routes, lifespan, exception handlers, middleware.
 
 ### Database schema changes
 
-1. Edit `src/agent_server/repo/orm.py`.
-2. `make migrate-create MSG="description"` → review the file in `migrations/versions/`.
-3. Migrations apply automatically on next server startup (or `make migrate-up`).
+Framework schema lives in the framework: `src/agent_server/repo/orm.py` +
+`src/agent_server/migrations/versions/` (auto-applied on startup, or
+`make migrate-up`). Your business tables belong to your domain package
+(e.g. `src/shop/`) with its own migration chain — never mix them into the
+framework's.
 
 ## Execution modes
 

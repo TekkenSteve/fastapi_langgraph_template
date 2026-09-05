@@ -22,17 +22,15 @@ logger = structlog.get_logger(__name__)
 
 
 def find_alembic_ini() -> Path:
-    """Find the bundled alembic.ini, never a foreign one in CWD.
+    """Find the framework's bundled alembic.ini, never a foreign one in CWD.
 
-    Resolution order:
-    1. Bundled with agent_server package (pip install)
-    2. Development layout (repo/editable install)
-
-    Resolving CWD first would match a host project's own alembic.ini and
-    silently skip our migrations, so a fresh DB crashes with relation
-    "assistant" does not exist (GH #306). Both branches resolve relative to
-    this module, so CWD is irrelevant — including Docker, where the package
-    branch wins regardless of workdir.
+    The alembic assets (this ini + the alembic/ versions dir) live inside the
+    agent_server package — they are framework schema, versioned with the
+    framework. Resolving relative to this module makes discovery identical in
+    development (src layout) and in installed images (site-packages), and
+    immune to CWD: resolving CWD first would match a host project's own
+    alembic.ini and silently skip our migrations, so a fresh DB crashes with
+    relation "assistant" does not exist (GH #306).
 
     Returns:
         Absolute path to alembic.ini
@@ -40,22 +38,12 @@ def find_alembic_ini() -> Path:
     Raises:
         FileNotFoundError: If alembic.ini cannot be found
     """
-    # 1. Package bundled (pip install agent-server)
-    # In installed package: site-packages/agent_server/alembic.ini
     package_dir = Path(__file__).resolve().parent.parent  # agent_server/
     package_ini = package_dir / "alembic.ini"
     if package_ini.exists():
         return package_ini
 
-    # 2. Development layout (src layout: <root>/src/agent_server/ → <root>/)
-    dev_root = package_dir.parent.parent  # Up from src/agent_server/ to the repo root
-    dev_ini = dev_root / "alembic.ini"
-    if dev_ini.exists():
-        return dev_ini
-
-    raise FileNotFoundError(
-        "Could not find alembic.ini. Run from the project root or ensure agent-server is properly installed."
-    )
+    raise FileNotFoundError("Could not find the bundled alembic.ini — agent-server is not properly installed.")
 
 
 def get_alembic_config() -> Config:

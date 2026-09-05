@@ -1,13 +1,13 @@
 {
-  "dependencies": ["./src/graphs"],
+  "dependencies": ["./src/graphs", "./tests/e2e/graphs"],
   "graphs": {
-    "agent": "./src/graphs/react_agent/graph.py:graph"
+    "agent": "./tests/e2e/graphs/react_agent/graph.py:graph"
   },
   "auth": {
-    "path": "./src/graphs/jwt_mock_auth_example.py:auth"
+    "path": "./tests/e2e/graphs/jwt_mock_auth_example.py:auth"
   },
   "http": {
-    "app": "./src/graphs/custom_routes_example.py:app",
+    "app": "./tests/e2e/graphs/custom_routes_example.py:app",
     "enable_custom_route_auth": false
   }
 }

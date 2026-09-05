@@ -53,7 +53,7 @@ class TestFindAlembicIni:
         monkeypatch.chdir(tmp_path)
 
         # Create a fake module location where no alembic.ini exists
-        # at any resolution level (package dir or dev layout)
+        # relative to the module location (the only resolution level)
         fake_core = tmp_path / "fake" / "pkg" / "core"
         fake_core.mkdir(parents=True)
         (fake_core / "migrations.py").touch()
@@ -64,7 +64,7 @@ class TestFindAlembicIni:
             str(fake_core / "migrations.py"),
         )
 
-        with pytest.raises(FileNotFoundError, match="Could not find alembic.ini"):
+        with pytest.raises(FileNotFoundError, match="Could not find the bundled alembic.ini"):
             find_alembic_ini()
 
 

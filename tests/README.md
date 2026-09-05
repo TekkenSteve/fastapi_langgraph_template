@@ -27,6 +27,8 @@ tests/
 │   ├── manual_auth_tests/   # JWT mock auth suite (@pytest.mark.auth_only)
 │   └── multi_instance/      # manual-only multi-instance/stress tests
 │
+├── graphs/                  # Unit tests for graph packages (mirrors src/graphs/)
+│   └── shopping_agent/      #   edges / gates / backends / tools / subgraph
 ├── fixtures/                # Shared fixtures (DummySession, FakeGraph, clients, …)
 └── conftest.py              # Global fixtures
 ```

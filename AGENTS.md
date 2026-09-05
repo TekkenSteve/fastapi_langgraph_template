@@ -27,7 +27,7 @@ and all wiring is explicit Python in `src/agent_server/app/main.py`.
 
 Notes:
 
-- `make test` covers `tests/unit` + `tests/integration`. One integration test
+- `make test` covers `tests/unit` + `tests/integration` + `tests/graphs` + `tests/shop`. One integration test
   (`test_assistant_large_config_db.py`) needs a real Postgres with migrations applied —
   it **self-skips** when the `assistant` table is missing, so `make test` is safe without
   `make deps`.
@@ -64,6 +64,9 @@ Layout rules:
   for metadata tables, LangGraph pool (psycopg) for checkpoints/store. Never cross the
   drivers — `settings.db.database_url` is SQLAlchemy-only, `database_url_sync` is psycopg-only.
 - Schema changes go through alembic migrations, never raw DDL from app code.
+  Framework migrations live in `src/agent_server/migrations/` (framework schema,
+  versioned with the framework); business-table migrations live with their
+  domain package — never mix the two chains.
 - `infra/` must not import from `domain/`, `usecase/`, `repo/` or `controller/`.
 
 ## The two config files
@@ -74,16 +77,23 @@ Layout rules:
 - `langgraph.json` — graph registry (`graphs`), graph import paths (`dependencies`),
   custom app (`http.app`), auth handler (`auth.path`), store scoping (`store.scopes`),
   thread TTL (`checkpointer.ttl`). Resolved via `GRAPHS_CONFIG` env → `./langgraph.json`.
+  Two siblings exist for testing: `langgraph.e2e.json` (adds the carrier graphs from
+  `tests/e2e/graphs/`, used by every `make e2e-*` target via `docker-compose.e2e.yml`)
+  and `langgraph.auth.json` (JWT mock auth stack).
 
 ## Adding things
 
 ### A new graph
 
-1. `src/graphs/<name>/graph.py` exporting `graph` (compiled) or a factory function
-   (see `src/graphs/factory/graph.py` for the `ServerRuntime` signature).
-2. Register in `langgraph.json` under `graphs`.
+Read `src/graphs/README.md` first — it defines the two authoring paradigms
+(explicit topology vs composed agent), the canonical package layout
+(`shopping_agent/` / `research_agent/`), and the growth rules.
+
+1. Create `src/graphs/<name>/` following the canonical layout.
+2. Register in `langgraph.json` under `graphs`, pointing at `<name>/graph.py`.
 3. Restart. A default assistant with a deterministic UUID (`uuid5(namespace, graph_id)`)
    is created automatically.
+4. Unit tests go in `tests/graphs/<name>/` and run with `make test`.
 
 ### A new API endpoint
 
@@ -94,12 +104,12 @@ Layout rules:
 
 For endpoints that belong to *your product* rather than the protocol server, prefer
 `http.app` in `langgraph.json` pointing at your own FastAPI app (see
-`src/graphs/custom_routes_example.py`) — it is merged in without touching `src/agent_server/`.
+`src/shop/api.py`) — it is merged in without touching `src/agent_server/`.
 
 ### A new domain (assistant-like entity)
 
 Work outward, mirroring how `threads` does it: `domain/<name>.py` → ORM table in
-`repo/orm.py` → `make migrate-create` → service in `usecase/` → router in
+`repo/orm.py` → framework schema: `make migrate-create` → service in `usecase/` → router in
 `controller/http/routers/` → wiring in `app/main.py` → tests.
 
 ## Testing

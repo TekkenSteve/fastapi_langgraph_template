@@ -118,6 +118,15 @@ class Assistant(Base):
             text("md5(config::text)"),
             unique=True,
         ),
+        # NOTE: use the DB column name "metadata" here — string args to Index
+        # resolve against column names, and the attribute key "metadata_dict"
+        # only exists on the mapped class, not the table.
+        Index(
+            "idx_assistant_metadata_gin",
+            "metadata",
+            postgresql_using="gin",
+            postgresql_ops={"metadata": "jsonb_path_ops"},
+        ),
     )
 
 
@@ -149,7 +158,15 @@ class Thread(Base):
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
 
     # Indexes for performance
-    __table_args__ = (Index("idx_thread_user", "user_id"),)
+    __table_args__ = (
+        Index("idx_thread_user", "user_id"),
+        Index(
+            "idx_thread_metadata_gin",
+            "metadata_json",
+            postgresql_using="gin",
+            postgresql_ops={"metadata_json": "jsonb_path_ops"},
+        ),
+    )
 
 
 class Run(Base):

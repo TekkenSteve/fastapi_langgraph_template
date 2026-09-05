@@ -4,7 +4,7 @@ These tests verify authentication and authorization against a real server with J
 
 ## Purpose
 
-The server is designed so users bring their own auth. These tests exercise the auth middleware, `@auth.authenticate` / `@auth.on.*` handlers, custom routes, and per-user thread isolation using [`src/graphs/jwt_mock_auth_example.py`](../../../../src/graphs/jwt_mock_auth_example.py).
+The server is designed so users bring their own auth. These tests exercise the auth middleware, `@auth.authenticate` / `@auth.on.*` handlers, custom routes, and per-user thread isolation using [`tests/e2e/graphs/jwt_mock_auth_example.py`](../graphs/jwt_mock_auth_example.py).
 
 ## When to run locally
 
@@ -52,9 +52,9 @@ This starts Docker (dev executor + [`langgraph.auth.json`](../../../../langgraph
 
 Root [`langgraph.auth.json`](../../../../langgraph.auth.json) registers:
 
-- Graph: `src/graphs/react_agent`
-- Auth: `src/graphs/jwt_mock_auth_example.py:auth`
-- Custom HTTP app: `src/graphs/custom_routes_example.py:app`
+- Graph: `tests/e2e/graphs/react_agent`
+- Auth: `tests/e2e/graphs/jwt_mock_auth_example.py:auth`
+- Custom HTTP app: `tests/e2e/graphs/custom_routes_example.py:app`
 
 ## Test files
 

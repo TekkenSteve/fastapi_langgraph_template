@@ -31,10 +31,8 @@ RUN uv export --frozen --no-emit-project --format=requirements-txt > requirement
     uv pip install --system --compile-bytecode -r requirements.txt && \
     rm requirements.txt
 
-# Copy the actual project source code and forced includes (alembic).
+# Copy the project source (alembic assets ship inside the package).
 COPY src/ ./src/
-COPY alembic.ini ./alembic.ini
-COPY migrations/ ./migrations/
 
 # Install the project package itself.
 RUN uv pip install --system --compile-bytecode --no-deps .
@@ -50,9 +48,7 @@ FROM base AS final
 COPY --from=builder /usr/local/lib/python${PY_VERSION}/site-packages/ /usr/local/lib/python${PY_VERSION}/site-packages/
 COPY --from=builder /usr/local/bin/ /usr/local/bin/
 
-# Copy runtime assets required by the app and alembic
-COPY alembic.ini ./alembic.ini
-COPY migrations/ ./migrations/
+# Copy runtime assets required by the app
 COPY langgraph.json ./langgraph.json
 COPY src/graphs/ ./src/graphs/
 

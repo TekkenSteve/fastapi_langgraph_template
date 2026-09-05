@@ -1,0 +1,10 @@
+# E2E override — registers the test-carrier graphs from tests/e2e/graphs/ on top
+# of the canonical graphs. Used by all make e2e-* targets.
+
+services:
+  app:
+    environment:
+      - GRAPHS_CONFIG=/app/langgraph.e2e.json
+    volumes:
+      - ./langgraph.e2e.json:/app/langgraph.e2e.json:ro
+      - ./tests/e2e/graphs:/app/tests/e2e/graphs:ro

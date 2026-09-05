@@ -19,7 +19,14 @@ from agent_server.app.route_merger import (
 )
 from agent_server.auth.deps import auth_dependency
 from agent_server.auth.enforcement import apply_auth_enforcement
-from agent_server.config.graph_config import CorsConfig, HttpConfig, get_config_dir, load_http_config
+from agent_server.config.graph_config import (
+    CorsConfig,
+    HttpConfig,
+    add_dependency_paths,
+    get_config_dir,
+    load_config,
+    load_http_config,
+)
 from agent_server.config.settings import settings
 from agent_server.controller.http.middleware import ContentTypeFixMiddleware, StructLogMiddleware
 from agent_server.controller.http.routers.assistants import router as assistants_router
@@ -340,6 +347,11 @@ def create_app() -> FastAPI:
     if http_config and http_config.get("app"):
         try:
             config_dir = get_config_dir()
+            # Custom apps may import user packages (graphs, shared libs);
+            # set up the config's dependency paths before importing.
+            if config_dir:
+                full_config = load_config() or {}
+                add_dependency_paths(full_config.get("dependencies", []), config_dir)
             user_app = load_custom_app(http_config["app"], base_dir=config_dir)
             logger.info("Custom app loaded successfully")
         except Exception as e:
