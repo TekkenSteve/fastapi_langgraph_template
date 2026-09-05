@@ -43,3 +43,6 @@ class Context:
 
     model: str = "openai/gpt-4o-mini"
     max_quantity_per_line: int = 5
+    max_cart_lines: int = 20
+    enable_memory: bool = True
+    enable_memory_extraction: bool = True

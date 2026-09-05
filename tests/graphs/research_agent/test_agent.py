@@ -42,3 +42,22 @@ async def test_audit_middleware_logs_and_reraises_errors() -> None:
 
     with pytest.raises(RuntimeError, match="boom"):
         await middleware.awrap_tool_call(request, handler)
+
+
+def test_skills_discoverable_through_composite_backend() -> None:
+    """Both shipped SKILL.md files are listed by the skills middleware path."""
+    from deepagents.backends.filesystem import FilesystemBackend
+    from deepagents.middleware.skills import _list_skills
+
+    from research_agent.agent import SKILLS_DIR
+
+    skills = _list_skills(FilesystemBackend(root_dir=SKILLS_DIR, virtual_mode=True), "/")
+    names = {s["name"] for s in skills}
+    assert names == {"web-research", "source-critic"}
+    for skill in skills:
+        assert skill["description"]
+
+
+def test_agent_compiles_with_skills_middleware() -> None:
+    # The compiled graph must build with the skills middleware attached.
+    assert build_research_agent() is not None

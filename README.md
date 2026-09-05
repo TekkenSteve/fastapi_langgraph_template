@@ -41,8 +41,9 @@ curl -s http://localhost:2026/info
 ```
 ├── src/
 │   ├── graphs/              # ★ Your agents live here — see src/graphs/README.md
-│   │   ├── shopping_agent/  #   canonical paradigm-A package (gates, HITL, memory, subgraphs)
-│   │   ├── research_agent/  #   canonical paradigm-B package (composed agent via deepagents)
+│   │   ├── shopping_agent/  #   canonical paradigm-A package (gates, fenced tools, memory, subgraphs)
+│   │   ├── research_agent/  #   canonical paradigm-B package (composed agent via deepagents, skills)
+│   │   ├── merchant_agent/  #   staff-facing: staged writes + guardrails + HITL approval
 │   │   └── shared/          #   cross-graph capability library (models, tools, middleware)
 │   │
 │   ├── shop/          #   domain package example: backend port + REST surface (api.py)

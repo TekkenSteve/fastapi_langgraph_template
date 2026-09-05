@@ -50,7 +50,7 @@ research_agent/
 ├── subagents.py       # sub-agent declarations — pure data dicts
 ├── tools.py           # agent-local tools; shared ones come from shared/tools/
 ├── prompts.py
-├── skills/            # SKILL.md resources (data, not code) — add when used
+├── skills/            # SKILL.md resources (data, not code), served read-only via CompositeBackend
 ├── memory/            # long-term memory templates — add when used
 └── __main__.py
 ```
@@ -75,8 +75,11 @@ harden; the registration path never changes.
 ```
 shared/
 ├── models.py          # load_chat_model — provider/model loading in one place
+├── fencing.py         # sanitize + wrap third-party text before the model reads it
+├── tooling.py         # structured tool results: ok / blocked (gate) / error
+├── memory.py          # long-term memory: write filter + retention lifecycle
 ├── tools/             # web_search.py, mcp.py … one tool per file
-├── middleware/        # audit_log.py … one capability per file
+├── middleware/        # audit_log.py, skill_router.py … one capability per file
 ├── backends.py        # backend factories — add when a second graph needs one
 └── prompts/           # shared prompt fragments
 ```
@@ -138,9 +141,24 @@ is the server's job, your graph code doesn't need to know.
 
 | Package | Paradigm | Demonstrates |
 |---|---|---|
-| `shopping_agent/` | **A (canonical)** | the full structure above: gates, HITL checkout, memory, `subgraphs/` — its backend port lives in `src/shop/` |
-| `research_agent/` | **B (canonical)** | composed agent: declared subagents, middleware, deepagents built-ins |
+| `shopping_agent/` | **A (canonical)** | the full structure above: gates, structured tool results, fenced payloads, checkout handoff, filtered memory + auto-extraction, `subgraphs/` — its backend port lives in `src/shop/` |
+| `research_agent/` | **B (canonical)** | composed agent: declared subagents, audit middleware, skills via `SkillRouterMiddleware` (per-request top-k selection), deepagents built-ins |
+| `merchant_agent/` | A | staged writes (stage → review → approve → apply) with apply-time guardrail recheck, budgeted analytics, HITL approval — the staff-facing counterpart of shopping_agent |
 | `shared/` | — | cross-graph capability library |
+
+### Skills at scale
+
+Skill selection has an evolution path, all using the same middleware seam:
+
+1. **~20 or fewer**: static listing + progressive disclosure (default).
+2. **20-50**: description engineering (the frontmatter `description` is the
+   selector — write "when to use" AND "when not to use"), `allowed_tools`,
+   layered sources (base → team → project → user).
+3. **50+**: per-request retrieval — `shared/middleware/skill_router.py`
+   (`SkillRouterMiddleware` + `LLMSkillSelector` / `EmbeddingSkillSelector`)
+   selects top-k before the model sees the catalog. Swap selectors without
+   touching the graph. Production-grade: back the embedding selector with the
+   server's pgvector store.
 
 The carrier graphs the e2e suite exercises (ReAct, HITL, subgraph, factory,
 cron, stress) live in `tests/e2e/graphs/` — they are server test fixtures,

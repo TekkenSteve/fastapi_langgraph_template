@@ -2,8 +2,9 @@
 
 from shopping_agent.nodes.chat import chat
 from shopping_agent.nodes.classify import classify
+from shopping_agent.nodes.extract_memory import extract_memory
 from shopping_agent.nodes.initialize import initialize
 from shopping_agent.nodes.policy import make_policy_node
 from shopping_agent.nodes.shop import make_shop_node
 
-__all__ = ["initialize", "classify", "make_shop_node", "make_policy_node", "chat"]
+__all__ = ["initialize", "classify", "make_shop_node", "make_policy_node", "chat", "extract_memory"]

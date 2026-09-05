@@ -14,7 +14,8 @@
     "stress_test": "./tests/e2e/graphs/stress_test/graph.py:graph",
     "stress_tool_agent": "./tests/e2e/graphs/stress_tool_agent/graph.py:graph",
     "shopping_agent": "./src/graphs/shopping_agent/graph.py:graph",
-    "research_agent": "./src/graphs/research_agent/graph.py:graph"
+    "research_agent": "./src/graphs/research_agent/graph.py:graph",
+    "merchant_agent": "./src/graphs/merchant_agent/graph.py:graph"
   },
   "http": {
     "app": "./tests/e2e/graphs/custom_routes_example.py:app"

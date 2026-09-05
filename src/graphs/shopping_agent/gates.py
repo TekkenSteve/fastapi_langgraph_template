@@ -25,3 +25,10 @@ def check_quantity(quantity: int, cap: int) -> str | None:
     if quantity > cap:
         return f"quantity {quantity} exceeds the per-line limit of {cap}."
     return None
+
+
+def check_cart_size(line_count: int, max_lines: int) -> str | None:
+    """Cap the number of distinct lines in the cart."""
+    if line_count >= max_lines:
+        return f"cart already has {line_count} lines; the limit is {max_lines}."
+    return None

@@ -20,6 +20,6 @@ def test_route_after_shop_goes_to_tools_when_tool_calls() -> None:
     assert route_after_shop(state) == "tools"
 
 
-def test_route_after_shop_ends_without_tool_calls() -> None:
+def test_route_after_shop_goes_to_memory_extraction_without_tool_calls() -> None:
     state = State(messages=[HumanMessage(content="hi"), AIMessage(content="Hello!")])
-    assert route_after_shop(state) == "__end__"
+    assert route_after_shop(state) == "extract_memory"

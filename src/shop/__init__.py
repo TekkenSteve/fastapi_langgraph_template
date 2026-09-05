@@ -9,10 +9,13 @@ from shop.backends import (
     Cart,
     CartLine,
     FakeShopBackend,
+    MerchantBackend,
     Order,
     Product,
     ShopBackend,
+    StagedChange,
     get_backend,
+    get_merchant_backend,
 )
 
 __all__ = [
@@ -21,6 +24,9 @@ __all__ = [
     "FakeShopBackend",
     "Order",
     "Product",
+    "MerchantBackend",
     "ShopBackend",
+    "StagedChange",
     "get_backend",
+    "get_merchant_backend",
 ]

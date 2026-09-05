@@ -38,3 +38,13 @@ steer the conversation toward shopping help when appropriate.
 
 Current time: {system_time}
 """
+
+MEMORY_EXTRACTION_PROMPT = """Extract durable customer preferences from this exchange.
+
+Read only the exchange below. Save a fact only when the customer stated a
+lasting preference or standing rule (diet, budget, size, roast level, …).
+Never save one-off request details, account/card/contact data, or guesses.
+
+Reply with a JSON list of {"key": ..., "value": ...} objects, or [] when
+nothing qualifies. Keys are short snake_case labels; values are short phrases.
+"""
