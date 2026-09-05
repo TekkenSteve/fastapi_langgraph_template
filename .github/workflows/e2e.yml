@@ -1,0 +1,32 @@
+name: E2E
+
+# E2E tests need a real OPENAI_API_KEY (the example ReAct agents call a live
+# LLM). Set it as a repo secret, then trigger manually. Nightly scheduling is
+# left out on purpose for a template — enable it if you want it.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Execution mode"
+        required: true
+        default: "dev"
+        type: choice
+        options: [dev, prod, auth]
+
+env:
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+jobs:
+  e2e:
+    name: e2e (${{ inputs.mode }})
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: Prepare .env
+        run: cp .env.example .env
+      - name: Run e2e suite
+        run: make e2e-${{ inputs.mode }}

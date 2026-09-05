@@ -1,0 +1,38 @@
+version: 2
+
+updates:
+  # Python dependencies (uv / pyproject.toml)
+  - package-ecosystem: uv
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "02:00"
+    open-pull-requests-limit: 10
+
+  # GitHub Actions pinned versions
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "02:00"
+    open-pull-requests-limit: 10
+
+  # Base image in deployments/docker/Dockerfile
+  - package-ecosystem: docker
+    directory: "/deployments/docker"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "02:00"
+    open-pull-requests-limit: 10
+
+  # Service images in docker-compose files
+  - package-ecosystem: docker-compose
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "02:00"
+    open-pull-requests-limit: 10

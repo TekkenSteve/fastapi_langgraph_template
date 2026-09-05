@@ -141,6 +141,14 @@ Prefer keeping your own endpoints **outside** the server package: point `http.ap
 | Crash recovery | — | lease + heartbeat + reaper |
 | Horizontal scaling | single instance | multi-instance (see `deployments/test/`) |
 
+## CI
+
+`.github/workflows/ci.yml` runs on every PR and push to `main`: ruff (lint + format),
+ty and bandit (non-blocking, same policy as `make ci-check`), unit + integration tests
+against a real Postgres service, and a Docker image build. `e2e.yml` runs the full E2E
+suite on demand (`workflow_dispatch`, needs an `OPENAI_API_KEY` repo secret).
+Dependabot keeps Python (uv), GitHub Actions and Docker image pins up to date weekly.
+
 The switch is `REDIS_BROKER_ENABLED` — the compose overrides set it for you.
 
 ## License
