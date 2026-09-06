@@ -24,8 +24,10 @@ tighten it for production.
 ## How it works
 
 ```
-app/providers.tsx   CopilotKit v2 provider, selfManagedAgents → LangGraphAgent(:2026)
-app/page.tsx        CopilotSidebar (v2) + useAgent registry + useInterrupt (HITL)
+app/providers.tsx   CopilotKit v2 provider; all three template graphs registered
+                    (shopping / merchant / research) with per-role copy
+app/page.tsx        role switcher (header) + CopilotSidebar (v2) + useAgent
+                    registry + useInterrupt (HITL)
 components/         ProductCarousel / ComparisonGrid / CheckoutSummary /
                     OrderStatusCard / PlanChecklist / SuggestionChips /
                     CartPanel (live from agent state) / CatalogGrid (REST) /

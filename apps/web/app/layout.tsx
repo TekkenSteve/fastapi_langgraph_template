@@ -7,7 +7,7 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Acme Storefront — Agent Demo",
+  title: "Acme Storefront · Agent Demo",
   description: "Generative UI demo over the agent server",
 };
 

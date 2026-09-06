@@ -9,6 +9,7 @@ import {
   useInterrupt,
 } from "@copilotkit/react-core/v2";
 import { Bug, Storefront } from "@phosphor-icons/react";
+import { AGENTS, type AgentId } from "./providers";
 import { ProductCarousel, PresentedProduct } from "@/components/ProductCarousel";
 import { ComparisonGrid } from "@/components/ComparisonGrid";
 import { OrderStatusCard, OrderInfo } from "@/components/OrderStatusCard";
@@ -19,7 +20,7 @@ import { CartPanel, CartState } from "@/components/CartPanel";
 import { CatalogGrid } from "@/components/CatalogGrid";
 import { CheckoutApprovalCard, CheckoutApprovalValue } from "@/components/CheckoutApproval";
 
-// Mirrors the graph's state channels (src/graphs/shopping_agent/state.py).
+// Mirrors the graphs' state channels (src/graphs/*/state.py).
 interface PresentationBlock {
   component: string;
   payload: {
@@ -46,17 +47,16 @@ function UnknownBlock({ component }: { component: string }) {
   );
 }
 
-// One agent binding for the whole page; product clicks become user messages.
-function useShoppingAgent() {
-  return useAgent({
-    agentId: "shopping_agent",
-    updates: [UseAgentUpdate.OnStateChanged],
-  });
-}
-
-
-function Presentations({ onSelect, onPick }: { onSelect: (p: PresentedProduct) => void; onPick: (s: string) => void }) {
-  const { agent, isReady } = useShoppingAgent();
+function Presentations({
+  agentId,
+  onSelect,
+  onPick,
+}: {
+  agentId: AgentId;
+  onSelect: (p: PresentedProduct) => void;
+  onPick: (s: string) => void;
+}) {
+  const { agent, isReady } = useAgent({ agentId, updates: [UseAgentUpdate.OnStateChanged] });
   if (!isReady) return null;
   const blocks = ((agent.state as AgentState)?.presentations ?? []) as PresentationBlock[];
   if (blocks.length === 0) return null;
@@ -87,13 +87,16 @@ function Presentations({ onSelect, onPick }: { onSelect: (p: PresentedProduct) =
 }
 
 function LiveCart() {
-  const { agent, isReady } = useShoppingAgent();
+  const { agent, isReady } = useAgent({
+    agentId: "shopping_agent",
+    updates: [UseAgentUpdate.OnStateChanged],
+  });
   if (!isReady) return null;
   return <CartPanel cart={(agent.state as AgentState)?.cart} />;
 }
 
 function CheckoutInterrupt() {
-  // HITL: the checkout tool pauses the graph; this card resolves it.
+  // HITL: the checkout tool pauses the shopping graph; this card resolves it.
   useInterrupt({
     agentId: "shopping_agent",
     render: ({ interrupt, event, resolve, cancel }) => {
@@ -112,19 +115,39 @@ function CheckoutInterrupt() {
   return null;
 }
 
+const HERO: Record<AgentId, { title: string; body: string }> = {
+  shopping_agent: {
+    title: "Your coffee gear, handled by an agent",
+    body: "Ask for a coffee maker in the sidebar. The agent searches the catalog, fills your cart, and renders real product cards here. Every fact on them is joined server-side, and checkout always asks first.",
+  },
+  merchant_agent: {
+    title: "Run the store, with guardrails",
+    body: "Stage price changes, review what is pending, and apply only what passes the guardrails. Nothing touches the catalog until it is approved. Staged writes all the way down.",
+  },
+  research_agent: {
+    title: "Deep research, delegated",
+    body: "Pose a research question. The agent plans the work, delegates to sub-agents, and cites its sources. Plans render here as checklists while the work runs.",
+  },
+};
+
 export const dynamic = "force-dynamic";
 
 export default function Home() {
   const [inspectorOpen, setInspectorOpen] = useState(false);
-  const { agent } = useShoppingAgent();
+  const [active, setActive] = useState<AgentId>("shopping_agent");
+  const { agent } = useAgent({ agentId: "shopping_agent", updates: [UseAgentUpdate.OnStateChanged] });
 
-  // Clicking a product (or a suggestion chip) asks the agent about it.
+  // Clicking a product (or a suggestion chip) asks the shopping agent about it.
   const ask = (text: string) => {
     agent.addMessage({ id: crypto.randomUUID(), role: "user", content: text });
     void agent.runAgent();
   };
   const askAboutProduct = (p: PresentedProduct) =>
     ask(`I'm interested in the ${p.name} (id: ${p.id}). What can you tell me about it?`);
+
+  const meta = AGENTS[active];
+  const hero = HERO[active];
+  const isShopping = active === "shopping_agent";
 
   return (
     <div className="min-h-[100dvh]">
@@ -135,6 +158,22 @@ export default function Home() {
           <span className="ml-2 rounded-full bg-(--accent-soft) px-2.5 py-0.5 text-xs font-medium text-(--accent-ink)">
             agent demo
           </span>
+          <nav className="ml-6 flex items-center gap-1 rounded-full border border-(--line) p-1">
+            {(Object.keys(AGENTS) as AgentId[]).map((id) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setActive(id)}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                  active === id
+                    ? "bg-(--accent) text-white"
+                    : "text-(--ink-soft) hover:text-(--ink)"
+                }`}
+              >
+                {AGENTS[id].label}
+              </button>
+            ))}
+          </nav>
           <button
             type="button"
             onClick={() => setInspectorOpen((v) => !v)}
@@ -150,35 +189,31 @@ export default function Home() {
       <main className="mx-auto grid max-w-5xl grid-cols-1 gap-8 px-6 py-10 lg:grid-cols-[1fr_280px]">
         <div className="flex flex-col gap-8">
           <div className="max-w-[65ch]">
-            <h1 className="text-3xl font-semibold tracking-tighter md:text-4xl">
-              Your coffee gear, handled by an agent
-            </h1>
-            <p className="mt-3 text-base leading-relaxed text-(--ink-soft)">
-              Ask for a coffee maker in the sidebar. The agent searches the catalog, fills your cart, and renders real
-              product cards here. Every fact on them is joined server-side, and checkout always asks first.
-            </p>
+            <h1 className="text-3xl font-semibold tracking-tighter md:text-4xl">{hero.title}</h1>
+            <p className="mt-3 text-base leading-relaxed text-(--ink-soft)">{hero.body}</p>
           </div>
-          <Presentations onSelect={askAboutProduct} onPick={ask} />
-          <section className="flex flex-col gap-3">
-            <h2 className="text-sm font-semibold tracking-tight text-(--ink)">Catalog</h2>
-            <CatalogGrid onSelect={askAboutProduct} />
-          </section>
+          <Presentations agentId={active} onSelect={askAboutProduct} onPick={ask} />
+          {isShopping && (
+            <section className="flex flex-col gap-3">
+              <h2 className="text-sm font-semibold tracking-tight text-(--ink)">Catalog</h2>
+              <CatalogGrid onSelect={askAboutProduct} />
+            </section>
+          )}
         </div>
         <aside className="flex flex-col gap-4">
-          <LiveCart />
+          {isShopping && <LiveCart />}
         </aside>
       </main>
 
       <CopilotSidebar
-        agentId="shopping_agent"
+        agentId={active}
         width={400}
         defaultOpen
-        header={{ title: "Acme Assistant" }}
+        header={{ title: meta.sidebarTitle }}
         labels={{
-          modalHeaderTitle: "Acme Assistant",
-          welcomeMessageText:
-            "Tell me what you are looking for. I will search the catalog, compare options, and fill your cart.",
-          chatInputPlaceholder: "Ask about coffee gear...",
+          modalHeaderTitle: meta.sidebarTitle,
+          welcomeMessageText: meta.welcome,
+          chatInputPlaceholder: meta.placeholder,
         }}
       />
       <CheckoutInterrupt />
