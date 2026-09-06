@@ -7,9 +7,10 @@ Single source of truth for executing a graph run. Both LocalExecutor
 """
 
 import asyncio
-from typing import Any
+from typing import Any, cast
 
 import structlog
+from langchain_core.runnables import RunnableConfig
 
 from agent_server.auth.ctx import with_auth_ctx
 from agent_server.config.settings import settings
@@ -185,7 +186,7 @@ async def _stream_graph(job: RunJob) -> _GraphResult:
             user=job.user,
             context=job.execution.context,
         ) as graph,
-        with_auth_ctx(job.user, job.user.permissions),  # type: ignore[arg-type]
+        with_auth_ctx(job.user, job.user.permissions),  # ty: ignore[invalid-argument-type]
     ):
         if job.execution.event_streaming_v2:
             await _stream_native_v2(job, graph, execution_input, run_config, result)
@@ -208,7 +209,7 @@ async def _stream_legacy(
     async for event_type, event_data in stream_graph_events(
         graph=graph,
         input_data=execution_input,
-        config=run_config,
+        config=cast("RunnableConfig", run_config),
         stream_mode=stream_modes,
         context=job.execution.context,
         subgraphs=job.behavior.subgraphs,

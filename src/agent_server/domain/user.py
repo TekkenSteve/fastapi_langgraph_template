@@ -21,7 +21,7 @@ class User(BaseModel):
     # Optional with defaults
     is_authenticated: bool = True
     permissions: list[str] = []
-    display_name: str | None = None
+    display_name: str = ""
 
     # Common optional fields (for IDE hints)
     org_id: str | None = None
@@ -40,6 +40,15 @@ class User(BaseModel):
         if name in extra:
             return extra[name]
         raise AttributeError(f"'{type(self).__name__}' has no attribute '{name}'")
+
+    # langgraph_sdk.auth.types.BaseUser protocol members.
+    def __getitem__(self, key: str) -> Any:
+        """Get a field by name (raises AttributeError for unknown keys)."""
+        return getattr(self, key)
+
+    def __contains__(self, key: str) -> bool:
+        """Check whether a field is set (including extra auth fields)."""
+        return key in self.model_dump() and getattr(self, key, None) is not None
 
 
 class AuthContext(BaseModel):

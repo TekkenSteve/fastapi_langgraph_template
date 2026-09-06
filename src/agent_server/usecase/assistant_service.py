@@ -178,7 +178,7 @@ class AssistantService(Authenticated):
         except Exception as e:
             raise HTTPException(400, f"Failed to load graph: {str(e)}") from e
 
-        config = request.config
+        config = request.config or {}
         context = request.context
 
         if config.get("configurable") and context:
@@ -463,6 +463,7 @@ class AssistantService(Authenticated):
         await self.session.execute(assistant_update)
         await self.session.commit()
         updated_assistant = await self.session.scalar(stmt)
+        assert updated_assistant is not None  # guaranteed by the update above
         return to_pydantic(updated_assistant)
 
     async def delete_assistant(self, assistant_id: str) -> dict:
@@ -529,6 +530,7 @@ class AssistantService(Authenticated):
         await self.session.execute(assistant_update)
         await self.session.commit()
         updated_assistant = await self.session.scalar(stmt)
+        assert updated_assistant is not None  # guaranteed by the update above
         return to_pydantic(updated_assistant)
 
     async def list_assistant_versions(self, assistant_id: str) -> list[Assistant]:
@@ -563,7 +565,7 @@ class AssistantService(Authenticated):
         version_list = [
             Assistant(
                 assistant_id=assistant_id,
-                name=v.name,
+                name=v.name or "",
                 description=v.description,
                 config=v.config or {},
                 context=v.context or {},

@@ -327,7 +327,8 @@ class WorkerExecutor(BaseExecutor):
             result = await client.blpop(settings.worker.WORKER_QUEUE_KEY, timeout=5)  # type: ignore[arg-type]
             if result is None:
                 return None
-            return result[1]
+            value = result[1]
+            return value.decode() if isinstance(value, bytes) else value
         except RedisTimeoutError:
             # Idle expiry: a blocking BLPOP hit the socket timeout with no jobs.
             # Normal when the queue is empty, not a connectivity failure — re-loop.
@@ -450,7 +451,7 @@ async def _acquire_and_load(run_id: str, worker_name: str) -> _LoadedRun | None:
             )
             .values(claimed_by=worker_name, lease_expires_at=lease_until, status="running")
         )
-        if result.rowcount == 0:  # type: ignore[union-attr]
+        if result.rowcount == 0:  # ty: ignore[unresolved-attribute]
             await session.rollback()
             return None
 
@@ -565,7 +566,7 @@ async def _heartbeat_loop(
                     .values(lease_expires_at=new_expiry)
                 )
                 await session.commit()
-            if result.rowcount == 0:  # type: ignore[union-attr]
+            if result.rowcount == 0:  # ty: ignore[unresolved-attribute]
                 logger.warning(
                     "Lease lost, cancelling job to prevent double execution",
                     run_id=run_id,

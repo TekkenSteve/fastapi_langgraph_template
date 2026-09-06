@@ -14,8 +14,9 @@ from __future__ import annotations
 import contextvars
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import cast
 
-from langgraph_sdk import Auth  # type: ignore
+from langgraph_sdk import Auth
 from starlette.authentication import AuthCredentials, BaseUser
 
 # Internal context-var storing the current auth context (or None when absent)
@@ -56,7 +57,8 @@ async def with_auth_ctx(
     else:
         token = _AuthCtx.set(
             Auth.types.BaseAuthContext(  # type: ignore[attr-defined]
-                user=user, permissions=scopes
+                user=cast("Auth.types.BaseUser", user),
+                permissions=scopes,  # our User implements the protocol
             )
         )
     try:

@@ -7,7 +7,8 @@ explicitly sets ``on_completion="keep"``).
 """
 
 import asyncio
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterable, AsyncIterator, Mapping
+from typing import cast
 from uuid import uuid4
 
 import structlog
@@ -15,6 +16,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette import EventSourceResponse
+from sse_starlette.sse import Content
 
 from agent_server.auth.deps import auth_dependency, get_current_user
 from agent_server.controller.http.routers.runs import (
@@ -163,7 +165,7 @@ async def stateless_wait_for_run(
     # actually subscribes to the broker.
     original_iterator = response.body_iterator
 
-    async def _wrapped_iterator() -> AsyncIterator[bytes]:
+    async def _wrapped_iterator() -> AsyncIterator[Content]:
         completed = False
         try:
             async for chunk in original_iterator:
@@ -184,7 +186,7 @@ async def stateless_wait_for_run(
                 )
 
     return StreamingResponse(
-        _wrapped_iterator(),
+        cast("AsyncIterable[str | bytes | memoryview]", _wrapped_iterator()),
         status_code=response.status_code,
         media_type=response.media_type,
         headers=dict(response.headers),
@@ -232,7 +234,7 @@ async def stateless_stream_run(
     inner_close_handler = response.client_close_handler_callable
     run_id = _extract_run_id_from_headers(response.headers)
 
-    async def _wrapped_iterator() -> AsyncIterator[bytes]:
+    async def _wrapped_iterator() -> AsyncIterator[Content]:
         completed = False
         try:
             async for chunk in original_iterator:

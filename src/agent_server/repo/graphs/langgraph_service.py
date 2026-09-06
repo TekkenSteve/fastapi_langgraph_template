@@ -7,9 +7,9 @@ Architecture:
 - Thread-safe by design without locks
 """
 
-import asyncio
 import copy
 import importlib.util
+import inspect
 import json
 import sys
 from collections.abc import AsyncIterator, Callable
@@ -519,7 +519,7 @@ class LangGraphService:
 
             if not is_factory(graph_id):
                 # 0-arg factory — call once at load time
-                if asyncio.iscoroutinefunction(graph):
+                if inspect.iscoroutinefunction(graph):
                     graph = await graph()
                 else:
                     graph = graph()

@@ -42,7 +42,7 @@ lint:
 	uv run ruff check .
 
 type-check:
-	uv run ty check src/agent_server/
+	uv run ty check src/agent_server/ --exit-zero-on-warning
 
 security:
 	uv run bandit -c pyproject.toml -r src/agent_server/
@@ -78,11 +78,11 @@ migrate-up:
 	cd src/agent_server && uv run alembic -c alembic.ini upgrade head
 
 ci-check: format lint
-	-uv run ty check src/agent_server/
+	uv run ty check src/agent_server/ --exit-zero-on-warning
 	-uv run bandit -c pyproject.toml -r src/agent_server/
 	$(MAKE) test
 	@echo ""
-	@echo "All CI checks completed! (ty and bandit are non-blocking)"
+	@echo "All CI checks completed! (bandit is non-blocking)"
 
 E2E_IGNORE := --ignore=tests/e2e/manual_auth_tests --ignore=tests/e2e/multi_instance
 

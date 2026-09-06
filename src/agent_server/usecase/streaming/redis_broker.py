@@ -422,7 +422,9 @@ class RedisBrokerManager(BaseBrokerManager):
         counter_key = f"{self._counter_prefix}{run_id}"
         try:
             client = redis_manager.get_client()
-            seq = await client.incr(counter_key)
+            # redis-py conditional overloads resolve to the sync signature in ty;
+            # runtime is the async client. Same as lrange below.
+            seq = await client.incr(counter_key)  # ty: ignore[invalid-await]
             await client.expire(counter_key, _REPLAY_TTL_SECONDS)
             return generate_event_id(run_id, int(seq))
         except RedisError as e:

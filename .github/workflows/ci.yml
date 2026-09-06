@@ -28,16 +28,13 @@ jobs:
   type-check:
     name: ty
     runs-on: ubuntu-latest
-    # Non-blocking, same policy as `make ci-check`: SQLAlchemy/LangGraph
-    # APIs produce known diagnostics. Tighten over time, then flip this off.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
       - run: uv sync --frozen
-      - run: uv run ty check src/agent_server/
+      - run: uv run ty check src/agent_server/ --exit-zero-on-warning
 
   security:
     name: bandit

@@ -5,11 +5,12 @@ import contextlib
 import json
 import warnings
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
+from langchain_core.runnables import RunnableConfig
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -435,10 +436,10 @@ async def get_thread_state(
                 access_context="threads.read",
                 user=user,
             ) as agent:
-                agent = agent.with_config(config)
+                agent = agent.with_config(cast("RunnableConfig", config))
                 # NOTE: LangGraph only exposes subgraph checkpoints while the run is
                 # interrupted. See https://docs.langchain.com/oss/python/langgraph/use-subgraphs#view-subgraph-state
-                state_snapshot = await agent.aget_state(config, subgraphs=subgraphs)
+                state_snapshot = await agent.aget_state(cast("RunnableConfig", config), subgraphs=subgraphs)
 
                 if not state_snapshot:
                     logger.info(
@@ -543,7 +544,7 @@ async def update_thread_state(
             ) as agent:
                 # Update state using aupdate_state method
                 # This creates a new checkpoint with the updated values
-                agent = agent.with_config(config)
+                agent = agent.with_config(cast("RunnableConfig", config))
 
                 # Handle values - can be dict or list of dicts
                 update_values = request.values
@@ -568,7 +569,9 @@ async def update_thread_state(
                     # If as_node is not provided, we need to determine a safe node to use
                     # For state updates without as_node, we'll use None which should just update state
                     # without triggering execution, but the graph may still validate the state
-                    updated_config = await agent.aupdate_state(config, update_values, as_node=request.as_node)
+                    updated_config = await agent.aupdate_state(
+                        cast("RunnableConfig", config), update_values, as_node=request.as_node
+                    )
                 except Exception as update_error:
                     logger.exception(
                         "aupdate_state failed for thread %s: %s",
@@ -662,8 +665,8 @@ async def get_thread_state_at_checkpoint(
                 access_context="threads.read",
                 user=user,
             ) as agent:
-                agent = agent.with_config(config)
-                state_snapshot = await agent.aget_state(config, subgraphs=subgraphs or False)
+                agent = agent.with_config(cast("RunnableConfig", config))
+                state_snapshot = await agent.aget_state(cast("RunnableConfig", config), subgraphs=subgraphs or False)
 
                 if not state_snapshot:
                     raise HTTPException(
@@ -785,11 +788,11 @@ async def get_thread_history_post(
         # checkpoint dict, or a full RunnableConfig with a "configurable" key.
         # No thread_id scrub here: aget_state_history reads only checkpoint_id
         # from `before` (the thread comes from the main config, pinned above).
-        before_config: dict[str, Any] | None = None
+        before_config: RunnableConfig | None = None
         if isinstance(before, str):
-            before_config = {"configurable": {"checkpoint_id": before}}
+            before_config = cast("RunnableConfig", {"configurable": {"checkpoint_id": before}})
         elif isinstance(before, dict):
-            before_config = before if "configurable" in before else {"configurable": before}
+            before_config = cast("RunnableConfig", before if "configurable" in before else {"configurable": before})
 
         state_snapshots = []
         kwargs: dict[str, Any] = {
@@ -807,11 +810,15 @@ async def get_thread_history_post(
         ) as agent:
             # Some LangGraph versions support subgraphs flag; pass if available
             try:
-                async for snapshot in agent.aget_state_history(config, subgraphs=subgraphs, **kwargs):
+                async for snapshot in agent.aget_state_history(
+                    cast("RunnableConfig", config),
+                    subgraphs=subgraphs,  # ty: ignore[unknown-argument]
+                    **kwargs,
+                ):
                     state_snapshots.append(snapshot)
             except TypeError:
                 # Fallback if subgraphs not supported in this version
-                async for snapshot in agent.aget_state_history(config, **kwargs):
+                async for snapshot in agent.aget_state_history(cast("RunnableConfig", config), **kwargs):
                     state_snapshots.append(snapshot)
 
         # Convert outside the async with so the graph context is closed first

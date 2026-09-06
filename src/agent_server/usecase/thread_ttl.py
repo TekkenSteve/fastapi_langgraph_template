@@ -17,10 +17,11 @@ import json
 from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 from functools import cache
-from typing import Literal
+from typing import Literal, cast
 
 import structlog
 from psycopg import Error as PsycopgError
+from psycopg.rows import DictRow
 from pydantic import BaseModel, Field
 from sqlalchemy import ColumnElement, Select, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -158,7 +159,7 @@ async def _prune_checkpoint_history(thread_id: str) -> None:
         raise RuntimeError("Database not initialized")
     async with pool.connection() as conn:
         cursor = await conn.execute(_HAS_PRUNABLE_HISTORY_SQL, {"tid": thread_id})
-        row = await cursor.fetchone()
+        row = cast("DictRow | None", await cursor.fetchone())
         # The lg_pool is configured with row_factory=dict_row — access by name.
         if row is None or not row["has_prunable_history"]:
             return

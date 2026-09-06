@@ -31,8 +31,13 @@ Notes:
   (`test_assistant_large_config_db.py`) needs a real Postgres with migrations applied —
   it **self-skips** when the `assistant` table is missing, so `make test` is safe without
   `make deps`.
-- `ty` and `bandit` are non-blocking in `make ci-check` (same policy as upstream aegra —
-  the SQLAlchemy/LangGraph APIs produce ~45 known diagnostics). `ruff` IS blocking.
+- `ty` IS blocking and the codebase passes with ZERO config overrides: boundary
+  code is typed honestly (sse_starlette's own `Content` union; `dict` internally,
+  `RunnableConfig` casts only at langgraph's boundary; one annotated
+  `# ty: ignore[unknown-argument]` for deliberate LangGraph version tolerance).
+  The extra warn-level rules from ty's "coming from mypy/pyright" guide are on;
+  warnings stay visible but non-blocking (`--exit-zero-on-warning`).
+  `bandit` is non-blocking. `ruff` IS blocking.
 - Never claim a change is done without `make format`, `make lint` and `make test` passing.
 
 ## Layering

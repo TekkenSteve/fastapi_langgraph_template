@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sse_starlette import EventSourceResponse, ServerSentEvent
+from sse_starlette.sse import Content
 
 from agent_server.config.settings import settings
 from agent_server.infra.serializers import GeneralSerializer
@@ -89,7 +90,7 @@ async def sse_to_bytes(inner: AsyncGenerator[str, None]) -> AsyncGenerator[bytes
 
 
 def make_sse_response(
-    body: AsyncIterator[bytes],
+    body: AsyncIterator[Content],
     *,
     headers: Mapping[str, str],
     close_handler: Callable[[MutableMapping[str, Any]], Awaitable[None]] | None = None,

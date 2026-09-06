@@ -196,7 +196,7 @@ async def general_exception_handler(_request: Request, exc: Exception) -> JSONRe
     )
 
 
-exception_handlers = {
+exception_handlers: dict[type[Exception], Any] = {
     HTTPException: agent_protocol_exception_handler,
     Exception: general_exception_handler,
 }

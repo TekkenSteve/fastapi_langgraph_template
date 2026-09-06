@@ -29,7 +29,7 @@ config = context.config
 config.attributes.setdefault("sqlalchemy.url", settings.db.database_url)
 
 
-def _get_database_url() -> str:
+def _get_database_url() -> str | None:
     """Read URL from config.attributes (set in env.py) or fall back to ini."""
     url = config.attributes.get("sqlalchemy.url")
     if url is not None:
@@ -92,7 +92,9 @@ async def run_async_migrations() -> None:
 
     """
     configuration = config.get_section(config.config_ini_section) or {}
-    configuration["sqlalchemy.url"] = _get_database_url()
+    url = _get_database_url()
+    if url is not None:
+        configuration["sqlalchemy.url"] = url
 
     connectable = async_engine_from_config(
         configuration,

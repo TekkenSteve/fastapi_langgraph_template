@@ -1,8 +1,12 @@
 """Database manager with LangGraph integration"""
 
+from typing import Any, cast
+
 import structlog
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.store.postgres.aio import AsyncPostgresStore
+from langgraph.store.postgres.base import PostgresIndexConfig
+from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -69,14 +73,21 @@ class DatabaseManager:
 
         logger.info(f"Initializing LangGraph components with shared pool (max {lg_max} conns)...")
 
-        self._checkpointer = AsyncPostgresSaver(conn=self.lg_pool)
+        # The pool is dict_row-configured (lg_kwargs); langgraph's component
+        # types expect a dict-row pool, psycopg's inference yields tuple rows.
+        self._checkpointer = AsyncPostgresSaver(
+            conn=cast("AsyncConnectionPool[AsyncConnection[dict[str, Any]]]", self.lg_pool)
+        )
         await self._checkpointer.setup()  # Ensure tables exist
 
         # Load store configuration for semantic search (if configured)
         store_config = load_store_config()
         index_config = store_config.get("index") if store_config else None
 
-        self._store = AsyncPostgresStore(conn=self.lg_pool, index=index_config)
+        self._store = AsyncPostgresStore(
+            conn=cast("AsyncConnectionPool[AsyncConnection[dict[str, Any]]]", self.lg_pool),
+            index=cast("PostgresIndexConfig | None", index_config),
+        )
         await self._store.setup()  # Ensure tables exist
 
         if index_config:

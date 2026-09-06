@@ -130,7 +130,7 @@ def _wire_route(route: APIRoute) -> int:
         # Wiring the enforcer here too would run the handler twice and drop any
         # metadata the handler injects by mutating `value`.
         if is_self_dispatching(method, route.path):
-            route._agent_server_auth_wired = True  # type: ignore[attr-defined]
+            route._agent_server_auth_wired = True  # ty: ignore[unresolved-attribute]
             return 0
         resource, action = mapping
         dependency = Depends(build_auth_enforcer(resource, action))
@@ -142,6 +142,6 @@ def _wire_route(route: APIRoute) -> int:
             0,
             get_parameterless_sub_dependant(depends=dependency, path=route.path_format),
         )
-        route._agent_server_auth_wired = True  # type: ignore[attr-defined]
+        route._agent_server_auth_wired = True  # ty: ignore[unresolved-attribute]
         return 1
     return 0

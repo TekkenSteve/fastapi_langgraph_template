@@ -19,7 +19,7 @@ import inspect
 import typing
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from typing import Any, Literal, get_args, get_origin
+from typing import Any, Literal, cast, get_args, get_origin
 
 import structlog
 from langgraph.graph import StateGraph
@@ -31,6 +31,7 @@ from langgraph_sdk.runtime import (
     _ExecutionRuntime,
     _ReadRuntime,
 )
+from pydantic import BaseModel
 
 from agent_server.auth.ctx import get_auth_ctx
 from agent_server.domain.user import User
@@ -284,7 +285,7 @@ def coerce_context(context: dict[str, Any] | None, graph_id: str) -> Any:
 
     try:
         if _is_pydantic_model(ctx_type):
-            return ctx_type.model_validate(context)
+            return cast("type[BaseModel]", ctx_type).model_validate(context)
         if dataclasses.is_dataclass(ctx_type):
             return ctx_type(**context)
     except Exception as exc:
@@ -345,13 +346,13 @@ def build_server_runtime(
         return _ExecutionRuntime(
             access_context=access_context,
             user=user,
-            store=store,
+            store=cast("BaseStore", store),  # initialized before execution-time runtimes are built
             context=context,
         )
     return _ReadRuntime(
         access_context=access_context,
         user=user,
-        store=store,
+        store=cast("BaseStore", store),
     )
 
 

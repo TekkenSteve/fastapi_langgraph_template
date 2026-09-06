@@ -110,6 +110,14 @@ known-first-party = ["tests"]
 [tool.ty.environment]
 python-version = "3.12"
 
+# Extra signal from ty's "coming from mypy/pyright" guide; each rule verified
+# to fire zero times in this codebase at adoption time.
+[tool.ty.rules]
+division-by-zero = "warn"
+possibly-missing-attribute = "warn"
+possibly-missing-import = "warn"
+possibly-unresolved-reference = "warn"
+
 [tool.bandit]
 exclude_dirs = ["tests", ".venv"]
 skips = [

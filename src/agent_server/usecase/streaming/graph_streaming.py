@@ -5,7 +5,7 @@ handling message accumulation, event processing, and multiple stream modes.
 """
 
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import aclosing
 from typing import Any, cast
 
@@ -76,7 +76,8 @@ def _extract_interrupt_kwargs(config: RunnableConfig) -> tuple[RunnableConfig, d
     return cast("RunnableConfig", run_config), interrupt_kwargs
 
 
-def _normalize_checkpoint_task(task: dict[str, Any]) -> dict[str, Any]:
+def _normalize_checkpoint_task(task: Mapping[str, Any]) -> dict[str, Any]:
+    task = dict(task)  # callers pass TypedDicts; work on a mutable copy
     """Normalize checkpoint task structure by extracting configurable state."""
     state_data = task.get("state")
 
@@ -96,7 +97,7 @@ def _normalize_checkpoint_task(task: dict[str, Any]) -> dict[str, Any]:
 
 def _normalize_checkpoint_payload(
     payload: CheckpointPayload | None,
-) -> dict[str, Any] | None:
+) -> CheckpointPayload | None:
     """Normalize debug checkpoint payload structure.
 
     Ensures checkpoint payloads have consistent task formatting.
@@ -107,10 +108,13 @@ def _normalize_checkpoint_payload(
     # Process all tasks in the checkpoint
     normalized_tasks = [_normalize_checkpoint_task(t) for t in payload["tasks"]]
 
-    return {
-        **payload,
-        "tasks": normalized_tasks,
-    }
+    return cast(
+        "CheckpointPayload",
+        {
+            **payload,
+            "tasks": normalized_tasks,
+        },
+    )
 
 
 async def stream_graph_events(
@@ -155,7 +159,7 @@ async def stream_graph_events(
 
     # Check if graph is a remote (JavaScript) implementation
     try:
-        from langgraph_api.js.base import BaseRemotePregel
+        from langgraph_api.js.base import BaseRemotePregel  # ty: ignore[unresolved-import]
 
         is_js_graph = isinstance(graph, BaseRemotePregel)
     except ImportError:
@@ -183,7 +187,7 @@ async def stream_graph_events(
             await logger.adebug(f"Failed to get context schema for filtering: {e}", exc_info=e)
 
     # Initialize streaming state
-    messages: dict[str, BaseMessageChunk] = {}
+    messages: dict[str, BaseMessageChunk | BaseMessage] = {}
 
     # Choose streaming method based on mode and graph type
     use_astream_events = "events" in stream_mode or is_js_graph
@@ -335,7 +339,7 @@ def _process_stream_event(
     namespace: str | None,
     subgraphs: bool,
     stream_mode: list[str],
-    messages: dict[str, BaseMessageChunk],
+    messages: dict[str, BaseMessageChunk | BaseMessage],
     only_interrupt_updates: bool,
     on_checkpoint: Callable[[CheckpointPayload | None], None],
     on_task_result: Callable[[TaskResultPayload], None],
@@ -415,29 +419,32 @@ def _process_stream_event(
             else:
                 msg = msg_
 
-            # Track and accumulate messages by ID
+            # Track and accumulate messages by ID (id-less messages can't
+            # accumulate — they pass through without tracking).
             msg_id = msg.id
-            is_new_message = msg_id not in messages
+            is_new_message = msg_id is None or msg_id not in messages
 
             if is_new_message:
-                messages[msg_id] = msg
+                if msg_id is not None:
+                    messages[msg_id] = msg
                 # First time seeing this message - send metadata
                 results.append(("messages/metadata", {msg_id: {"metadata": meta}}))
-            else:
+            elif msg_id is not None:
                 # Accumulate additional chunks
-                messages[msg_id] += msg
+                messages[msg_id] = cast("BaseMessageChunk | BaseMessage", messages[msg_id] + msg)
 
             # Determine event type based on message instance type
             is_partial_message = isinstance(msg, BaseMessageChunk)
             event_name = "messages/partial" if is_partial_message else "messages/complete"
 
             # Format accumulated message for output
+            tracked = messages.get(msg_id, msg)
             if is_chunk_type:
                 # Keep raw chunks for streaming messages
-                formatted_msg = messages[msg_id]
+                formatted_msg = tracked
             else:
                 # Convert accumulated chunks to complete message
-                formatted_msg = message_chunk_to_message(messages[msg_id])
+                formatted_msg = message_chunk_to_message(cast("BaseMessageChunk", tracked))
 
             results.append((event_name, [formatted_msg]))
 

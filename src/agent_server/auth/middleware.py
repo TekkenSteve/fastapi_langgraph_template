@@ -10,7 +10,7 @@ import importlib
 import importlib.util
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import structlog
 from langgraph_sdk import Auth
@@ -55,7 +55,7 @@ class LangGraphUser(BaseUser):
     def __getattr__(self, name: str) -> Any:
         """Allow access to any additional fields from auth data"""
         if name in self._user_data:
-            return self._user_data[name]
+            return cast("Any", self._user_data)[name]
         raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
     def to_dict(self) -> MinimalUserDict:
@@ -272,7 +272,7 @@ class LangGraphAuthBackend(AuthenticationBackend):
 
             # Create Starlette-compatible user and credentials
             credentials = AuthCredentials(permissions)
-            user = LangGraphUser(user_data)
+            user = LangGraphUser(cast("Auth.types.MinimalUserDict", user_data))  # isinstance-guarded above
 
             logger.debug(f"Successfully authenticated user: {user.identity}")
             return credentials, user

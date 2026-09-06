@@ -1,6 +1,6 @@
 """Route merging utilities for combining custom apps with the server core routes"""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
 
 import structlog
@@ -47,7 +47,7 @@ def merge_lifespans(user_app: FastAPI, core_lifespan: Callable) -> FastAPI:
     return user_app
 
 
-def merge_exception_handlers(user_app: FastAPI, core_exception_handlers: dict[type, Callable]) -> FastAPI:
+def merge_exception_handlers(user_app: FastAPI, core_exception_handlers: Mapping[type[Exception], Callable]) -> FastAPI:
     """Merge core exception handlers with user exception handlers.
 
     Core handlers are added only if user hasn't defined a handler for that exception type.
