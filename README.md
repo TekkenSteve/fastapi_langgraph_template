@@ -8,7 +8,7 @@ It speaks the [Agent Protocol](https://github.com/langchain-ai/agent-protocol) (
 
 - Full Agent Protocol surface: **Assistants, Threads, Runs (stateful + stateless), Crons, Store, SSE streaming, v2 event streaming**
 - **Dual execution modes**: in-process asyncio executor (dev) or Redis job queue + workers with lease-based crash recovery (prod)
-- **Pluggable auth**: noop by default, JWT/custom via one file (`src/graphs/jwt_mock_auth_example.py` as reference)
+- **Pluggable auth**: noop by default, JWT/custom via one file (`tests/e2e/graphs/jwt_mock_auth_example.py` as reference)
 - **LangGraph-native persistence**: Postgres checkpointer + store (pgvector), SQLAlchemy metadata tables, Alembic migrations applied on startup
 - **Observability**: structlog + correlation IDs, OpenTelemetry fan-out (Langfuse / Phoenix / OTLP), Prometheus metrics
 - **Graph factories**: compile graphs per-request with user/config context
@@ -17,7 +17,7 @@ It speaks the [Agent Protocol](https://github.com/langchain-ai/agent-protocol) (
 ## Quick start
 
 ```bash
-cp .env.example .env   # then edit (at minimum set a real OPENAI_API_KEY for the ReAct example)
+cp .env.example .env   # then edit (at minimum set a real OPENAI_API_KEY for the example graphs)
 make install           # uv sync
 
 # Option A: everything in Docker (dev mode: no Redis, in-process executor)
@@ -43,23 +43,25 @@ curl -s http://localhost:2026/info
 │   ├── graphs/              # ★ Your agents live here — see src/graphs/README.md
 │   │   ├── shopping_agent/  #   canonical paradigm-A package (gates, fenced tools, memory, subgraphs)
 │   │   ├── research_agent/  #   canonical paradigm-B package (composed agent via deepagents, skills)
-│   │   ├── merchant_agent/  #   staff-facing: staged writes + guardrails + HITL approval
+│   │   ├── merchant_agent/  #   staff-facing: staged writes + guardrails + apply-time recheck
 │   │   └── shared/          #   cross-graph capability library (models, tools, middleware)
 │   │
-│   ├── shop/          #   domain package example: backend port + REST surface (api.py)
+│   ├── shop/                # domain package example: backend port + REST surface (api.py)
 │   └── agent_server/        # ★ The server (rarely needs changes)
-│   ├── app/                 #   composition root: create_app(), lifespan, wiring
-│   ├── config/              #   pydantic-settings groups + langgraph.json loading
-│   ├── domain/              #   Agent Protocol models (Assistant, Thread, Run, …)
-│   ├── repo/                #   persistence: db pools, ORM, migration runner, graph registry
-│   ├── usecase/             #   business logic: execution/, streaming/, cron/, services
-│   ├── controller/http/     #   routers/ (Agent Protocol endpoints) + middleware/
-│   ├── auth/                #   pluggable authn/authz subsystem
-│   └── infra/               #   redis, SSE primitives, observability, logging
+│       ├── app/             #   composition root: create_app(), lifespan, wiring
+│       ├── config/          #   pydantic-settings groups + langgraph.json loading
+│       ├── domain/          #   Agent Protocol models (Assistant, Thread, Run, …)
+│       ├── repo/            #   persistence: db pools, ORM, migration runner, graph registry
+│       ├── usecase/         #   business logic: execution/, streaming/, cron/, services
+│       ├── controller/http/ #   routers/ (Agent Protocol endpoints) + middleware/
+│       ├── auth/            #   pluggable authn/authz subsystem
+│       ├── infra/           #   redis, SSE primitives, observability, logging
+│       ├── migrations/      #   framework schema (alembic; business tables live with their domain)
+│       └── alembic.ini      #   packaged with the framework
 │
-├── tests/                   # unit / integration / graphs / e2e, mirroring the src layers
+├── tests/                   # unit / integration / graphs / shop / e2e, mirroring the src layers
 │   └── e2e/graphs/          #   carrier graphs that exercise the server (not user examples)
-├── apps/web/                # CopilotKit generative-UI demo (npm run dev)
+├── apps/web/                # CopilotKit generative-UI demo with role switcher (npm run dev)
 ├── deployments/docker/      # production Dockerfile
 ├── langgraph.json           # graph registry + http/auth/store config (canonical graphs only)
 ├── langgraph.e2e.json       # e2e registry: canonical + carrier graphs (used by make e2e-*)
@@ -67,6 +69,9 @@ curl -s http://localhost:2026/info
 ├── docker-compose.yml       # prod mode (Redis workers)
 ├── docker-compose.dev.yml   # dev override (no Redis)
 ├── docker-compose.auth.yml  # auth override (JWT mock)
+├── docker-compose.e2e.yml   # e2e override (carrier graphs)
+├── pyproject.toml           # deps + ruff/ty/pytest/bandit config
+├── uv.lock                  # locked dependencies
 └── Makefile                 # every task entry point
 ```
 
