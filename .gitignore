@@ -44,6 +44,44 @@ htmlcov/
 *.log
 logs/
 
+# ---------- Node / frontend (apps/web) ----------
+node_modules/
+
+# Next.js
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# Turbopack / build traces
+.turbo/
+.turbopack/
+.next-build/
+
+# Package-manager stores and caches
+.pnpm-store/
+.npm/
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.pnp.*
+
+# Frontend env files (Next.js local overrides)
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Playwright / browser test artifacts
+test-results/
+playwright-report/
+playwright/.cache/
+blob-report/
+.playwright/
+
+# Vercel / deployment
+.vercel/
+
 # ---------- IDE / editors ----------
 .idea/
 .vscode/

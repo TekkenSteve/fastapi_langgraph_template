@@ -78,6 +78,7 @@ shared/
 ├── fencing.py         # sanitize + wrap third-party text before the model reads it
 ├── tooling.py         # structured tool results: ok / blocked (gate) / error
 ├── memory.py          # long-term memory: write filter + retention lifecycle
+├── presentation.py    # generative UI: validated + server-enriched components
 ├── tools/             # web_search.py, mcp.py … one tool per file
 ├── middleware/        # audit_log.py, skill_router.py … one capability per file
 ├── backends.py        # backend factories — add when a second graph needs one
@@ -141,10 +142,19 @@ is the server's job, your graph code doesn't need to know.
 
 | Package | Paradigm | Demonstrates |
 |---|---|---|
-| `shopping_agent/` | **A (canonical)** | the full structure above: gates, structured tool results, fenced payloads, checkout handoff, filtered memory + auto-extraction, `subgraphs/` — its backend port lives in `src/shop/` |
-| `research_agent/` | **B (canonical)** | composed agent: declared subagents, audit middleware, skills via `SkillRouterMiddleware` (per-request top-k selection), deepagents built-ins |
+| `shopping_agent/` | **A (canonical)** | the full structure above: gates, structured tool results, fenced payloads, checkout handoff, filtered memory + auto-extraction, generative UI (`present_*`), `subgraphs/` — its backend port lives in `src/shop/` |
+| `research_agent/` | **B (canonical)** | composed agent: declared subagents, audit middleware, skills via `SkillRouterMiddleware` (per-request top-k selection), `present_plan` generative UI, deepagents built-ins |
 | `merchant_agent/` | A | staged writes (stage → review → approve → apply) with apply-time guardrail recheck, budgeted analytics, HITL approval — the staff-facing counterpart of shopping_agent |
 | `shared/` | — | cross-graph capability library |
+
+### Paradigm boundary: where skills live
+
+The progressive-disclosure skills mechanism (`SkillRouterMiddleware`) is a
+langchain agent middleware — it attaches to **paradigm B** agents only. A
+paradigm A graph's equivalent is intent routing plus per-node prompt sections
+(`classify` → shop/policy/order/chat, each with its own system prompt in
+`prompts.py`). If a graph accumulates many large domain playbooks, that is the
+signal it should be a paradigm B agent instead.
 
 ### Skills at scale
 

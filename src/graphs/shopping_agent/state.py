@@ -33,6 +33,12 @@ class State(InputState):
     seen_product_ids: Annotated[list[str], operator.add] = field(default_factory=list)
     # Long-term preferences loaded from the server store by the initialize node.
     preferences: dict[str, Any] = field(default_factory=dict)
+    # Generative UI blocks rendered this run (the UI source of truth; each
+    # entry is {"component", "payload"}). Frontends render the latest.
+    presentations: Annotated[list[dict[str, Any]], operator.add] = field(default_factory=list)
+    # Latest cart snapshot (replace semantics), written by cart-mutating tools.
+    # Frontends render a live cart panel from it.
+    cart: dict[str, Any] = field(default_factory=dict)
     # Managed by LangGraph (recursion_limit): True on the last allowed step.
     is_last_step: IsLastStep = field(default=False)
 

@@ -17,6 +17,9 @@ The customer's recent orders:
 {orders}
 
 Answer from this data only. If the list is empty, say no orders were found.
+Lead with the two facts they came for (current status, expected next step),
+in few words. For anything about returns, refunds, or compensation, say the
+terms are with the store and never invent compensation.
 """
 
 
@@ -39,4 +42,9 @@ async def answer_orders(state: OrderState, runtime: Runtime[Context]) -> dict[st
     )
     model = load_chat_model(runtime.context.model)
     response = await model.ainvoke([SystemMessage(ANSWER_PROMPT.format(orders=lines)), *state.messages])
-    return {"messages": [response]}
+
+    update: dict[str, Any] = {"messages": [response]}
+    if state.orders:
+        latest = state.orders[-1]
+        update["presentations"] = [{"component": "OrderStatusCard", "payload": {"order": latest}}]
+    return update

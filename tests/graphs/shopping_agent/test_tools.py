@@ -95,12 +95,37 @@ async def test_remember_preference_without_store(harness) -> None:
     assert "unavailable" in result.update["messages"][0].content
 
 
-def test_tools_expose_five_contracts(harness) -> None:
+def test_tools_expose_nine_contracts(harness) -> None:
     _, tools = harness
-    assert set(tools) == {"search_products", "get_cart", "add_to_cart", "checkout", "remember_preference"}
+    assert set(tools) == {
+        "search_products",
+        "get_cart",
+        "add_to_cart",
+        "checkout",
+        "remember_preference",
+        "present_products",
+        "present_comparison",
+        "present_checkout_summary",
+        "present_suggestions",
+    }
 
 
 def test_context_defaults() -> None:
     ctx = Context()
     assert ctx.model == "openai/gpt-4o-mini"
     assert ctx.max_quantity_per_line == 5
+
+
+async def test_add_to_cart_writes_live_cart_snapshot(harness) -> None:
+    backend, tools = harness
+    result = await tools["add_to_cart"].coroutine(
+        product_id="kettle-01",
+        quantity=2,
+        state=_state(seen=["kettle-01"]),
+        config=CONFIG,
+        tool_call_id="c1",
+    )
+    cart = result.update["cart"]
+    assert cart["lines"][0]["name"] == "Acme Gooseneck Kettle"
+    assert cart["lines"][0]["quantity"] == 2
+    assert cart["total"] == 91.0

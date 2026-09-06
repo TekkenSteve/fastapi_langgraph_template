@@ -59,6 +59,7 @@ curl -s http://localhost:2026/info
 │
 ├── tests/                   # unit / integration / graphs / e2e, mirroring the src layers
 │   └── e2e/graphs/          #   carrier graphs that exercise the server (not user examples)
+├── apps/web/                # CopilotKit generative-UI demo (npm run dev)
 ├── deployments/docker/      # production Dockerfile
 ├── langgraph.json           # graph registry + http/auth/store config (canonical graphs only)
 ├── langgraph.e2e.json       # e2e registry: canonical + carrier graphs (used by make e2e-*)
@@ -152,6 +153,13 @@ suite on demand (`workflow_dispatch`, needs an `OPENAI_API_KEY` repo secret).
 Dependabot keeps Python (uv), GitHub Actions and Docker image pins up to date weekly.
 
 The switch is `REDIS_BROKER_ENABLED` — the compose overrides set it for you.
+
+## Frontend demo
+
+`apps/web/` is a minimal CopilotKit (v2 SDK) + Next.js app rendering
+`shopping_agent`'s generative-UI blocks (product carousel, suggestion chips) —
+see `apps/web/README.md`. The server needs no changes; the browser connects
+directly via CopilotKit's LangGraph agent.
 
 ## License
 

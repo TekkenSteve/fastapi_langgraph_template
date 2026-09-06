@@ -22,7 +22,7 @@ app = FastAPI(title="Shop API")
 @app.get("/shop/products")
 async def list_products(q: str = Query(default="")) -> list[dict]:
     """Public catalog — no auth needed."""
-    products = await get_backend().search_products(q)
+    products = await get_backend().search_products(q, limit=50)
     return [{"id": p.id, "name": p.name, "price": p.price, "description": p.description} for p in products]
 
 

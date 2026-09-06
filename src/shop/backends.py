@@ -49,6 +49,7 @@ class ShopBackend(Protocol):
     """Tool contracts the shop host must implement — customer surface."""
 
     async def search_products(self, query: str, *, limit: int = 5) -> list[Product]: ...
+    async def get_product(self, product_id: str) -> Product | None: ...
     async def get_cart(self, user_id: str) -> Cart: ...
     async def add_to_cart(self, user_id: str, product_id: str, quantity: int) -> Cart: ...
     async def checkout_handoff(self, user_id: str) -> str:
@@ -104,13 +105,19 @@ class FakeShopBackend:
         self._order_seq = 0
         self._changes: dict[str, list[StagedChange]] = {}
         self._change_seq = 0
+        # Copy per instance: apply_change mutates the catalog; the module-level
+        # demo data must not leak mutations across tests or runs.
+        self._catalog: list[Product] = list(_DEMO_CATALOG)
 
     async def search_products(self, query: str, *, limit: int = 5) -> list[Product]:
         terms = query.lower().split()
         if not terms:
-            return list(_DEMO_CATALOG)[:limit]
-        matches = [p for p in _DEMO_CATALOG if any(t in f"{p.name} {p.description}".lower() for t in terms)]
+            return list(self._catalog)[:limit]
+        matches = [p for p in self._catalog if any(t in f"{p.name} {p.description}".lower() for t in terms)]
         return matches[:limit]
+
+    async def get_product(self, product_id: str) -> Product | None:
+        return next((p for p in self._catalog if p.id == product_id), None)
 
     async def get_cart(self, user_id: str) -> Cart:
         return self._carts.setdefault(user_id, Cart())
@@ -146,7 +153,7 @@ class FakeShopBackend:
     # ---- merchant surface: staged changes ----
 
     async def get_listing(self, product_id: str) -> Product | None:
-        return next((p for p in _DEMO_CATALOG if p.id == product_id), None)
+        return next((p for p in self._catalog if p.id == product_id), None)
 
     async def stage_price_change(self, user_id: str, product_id: str, new_price: float) -> StagedChange:
         self._change_seq += 1
@@ -170,7 +177,7 @@ class FakeShopBackend:
         if change.kind == "price_change":
             product = await self.get_listing(change.target_id)
             if product is not None:
-                _DEMO_CATALOG[_DEMO_CATALOG.index(product)] = Product(
+                self._catalog[self._catalog.index(product)] = Product(
                     product.id, product.name, change.payload["new_price"], product.description
                 )
         change.status = "applied"

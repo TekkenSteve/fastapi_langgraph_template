@@ -9,7 +9,7 @@ Conventions demonstrated here:
 - checkout is a handoff: the agent never completes an order itself.
 """
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import InjectedToolCallId, tool
@@ -19,15 +19,35 @@ from langgraph.types import Command, interrupt
 
 from shared.fencing import SHARED_FENCE
 from shared.memory import MemoryStore, MemoryWriteRejected
+from shared.presentation import make_presentation_tool
 from shared.tooling import tool_blocked, tool_error, tool_ok
 from shop.backends import Cart, ShopBackend
 from shopping_agent.gates import check_cart_size, check_provenance, check_quantity
+from shopping_agent.presentation import (
+    PRESENT_CHECKOUT_SUMMARY,
+    PRESENT_COMPARISON,
+    PRESENT_PRODUCTS,
+    PRESENT_SUGGESTIONS,
+)
 from shopping_agent.state import Context, State
 
 
 def _user_id(config: RunnableConfig) -> str:
     """Server injects the authenticated identity into config.configurable."""
     return config.get("configurable", {}).get("user_id", "demo-user")
+
+
+async def _cart_snapshot(backend: ShopBackend, cart: Cart) -> dict[str, Any]:
+    """Cart payload for the live UI panel: lines joined with product facts."""
+    lines = []
+    total = 0.0
+    for line in cart.lines:
+        product = await backend.get_product(line.product_id)
+        if product is None:
+            continue
+        total += product.price * line.quantity
+        lines.append({"id": product.id, "name": product.name, "price": product.price, "quantity": line.quantity})
+    return {"lines": lines, "total": round(total, 2), "currency": "USD"}
 
 
 def _format_cart(cart: Cart) -> str:
@@ -58,7 +78,11 @@ def make_shop_tools(backend: ShopBackend) -> list:
     ) -> Command:
         """Show the current cart contents."""
         cart = await backend.get_cart(_user_id(config))
-        return tool_ok(_format_cart(cart), tool_call_id)
+        return tool_ok(
+            _format_cart(cart),
+            tool_call_id,
+            state_update={"cart": await _cart_snapshot(backend, cart)},
+        )
 
     @tool
     async def add_to_cart(
@@ -79,7 +103,11 @@ def make_shop_tools(backend: ShopBackend) -> list:
             if error is not None:
                 return tool_blocked(gate, error, tool_call_id)
         cart = await backend.add_to_cart(_user_id(config), product_id, quantity)
-        return tool_ok(f"Added {quantity} × {product_id}.\n{_format_cart(cart)}", tool_call_id)
+        return tool_ok(
+            f"Added {quantity} × {product_id}.\n{_format_cart(cart)}",
+            tool_call_id,
+            state_update={"cart": await _cart_snapshot(backend, cart)},
+        )
 
     @tool
     async def checkout(
@@ -121,4 +149,34 @@ def make_shop_tools(backend: ShopBackend) -> list:
             return tool_blocked("memory_write_filter", str(exc), tool_call_id)
         return tool_ok(f"Noted: {key} = {value}. I'll remember that.", tool_call_id)
 
-    return [search_products, get_cart, add_to_cart, checkout, remember_preference]
+    present_products = make_presentation_tool(
+        PRESENT_PRODUCTS,
+        backend=backend,
+        description="Render a product carousel in the customer's UI. ids must come from search results this session.",
+    )
+    present_comparison = make_presentation_tool(
+        PRESENT_COMPARISON,
+        backend=backend,
+        description="Render a side-by-side comparison grid for 2-4 products (ids from search results).",
+    )
+    present_checkout_summary = make_presentation_tool(
+        PRESENT_CHECKOUT_SUMMARY,
+        backend=backend,
+        description="Render the checkout recap card (cart lines + total) before checkout. Always call before checkout.",
+    )
+    present_suggestions = make_presentation_tool(
+        PRESENT_SUGGESTIONS,
+        backend=backend,
+        description="Show 1-4 short follow-up suggestion chips. Use at the end of a helpful answer.",
+    )
+    return [
+        search_products,
+        get_cart,
+        add_to_cart,
+        checkout,
+        remember_preference,
+        present_products,
+        present_comparison,
+        present_checkout_summary,
+        present_suggestions,
+    ]
