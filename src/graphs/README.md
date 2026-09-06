@@ -74,7 +74,7 @@ harden; the registration path never changes.
 
 ```
 shared/
-├── models.py          # load_chat_model — provider/model loading in one place
+├── models.py          # load_chat_model(+with_fallbacks) — provider/model loading in one place
 ├── fencing.py         # sanitize + wrap third-party text before the model reads it
 ├── tooling.py         # structured tool results: ok / blocked (gate) / error
 ├── memory.py          # long-term memory: write filter + retention lifecycle

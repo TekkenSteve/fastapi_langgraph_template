@@ -42,8 +42,8 @@ def test_last_exchange_text_picks_user_and_answer_only() -> None:
 async def test_extracts_and_saves_preferences(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         sys.modules["shopping_agent.nodes.extract_memory"],
-        "load_chat_model",
-        lambda name: _FakeModel('[{"key": "roast", "value": "light"}]'),
+        "load_chat_model_with_fallbacks",
+        lambda name, _fallbacks=None: _FakeModel('[{"key": "roast", "value": "light"}]'),
     )
     store = InMemoryStore()
     await extract_memory(_state(), {"configurable": {"user_id": "u1"}}, _runtime(store))
@@ -63,8 +63,8 @@ async def test_skips_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_prose_answer_saves_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         sys.modules["shopping_agent.nodes.extract_memory"],
-        "load_chat_model",
-        lambda name: _FakeModel("nothing to save"),
+        "load_chat_model_with_fallbacks",
+        lambda name, _fallbacks=None: _FakeModel("nothing to save"),
     )
     store = InMemoryStore()
     await extract_memory(_state(), {"configurable": {"user_id": "u1"}}, _runtime(store))
@@ -74,8 +74,8 @@ async def test_prose_answer_saves_nothing(monkeypatch: pytest.MonkeyPatch) -> No
 async def test_filtered_facts_are_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         sys.modules["shopping_agent.nodes.extract_memory"],
-        "load_chat_model",
-        lambda name: _FakeModel('[{"key": "card", "value": "4111 1111 1111 1111"}]'),
+        "load_chat_model_with_fallbacks",
+        lambda name, _fallbacks=None: _FakeModel('[{"key": "card", "value": "4111 1111 1111 1111"}]'),
     )
     store = InMemoryStore()
     await extract_memory(_state(), {"configurable": {"user_id": "u1"}}, _runtime(store))

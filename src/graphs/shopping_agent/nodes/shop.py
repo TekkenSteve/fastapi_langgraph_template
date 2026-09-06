@@ -7,14 +7,14 @@ from typing import Any, cast
 from langchain_core.messages import AIMessage, SystemMessage
 from langgraph.runtime import Runtime
 
-from shared.models import load_chat_model
+from shared.models import load_chat_model_with_fallbacks
 from shopping_agent.prompts import SHOP_SYSTEM_PROMPT
 from shopping_agent.state import Context, State
 
 
 def make_shop_node(tools: list) -> Callable[[State, Runtime[Context]], Coroutine[Any, Any, dict[str, Any]]]:
     async def shop(state: State, runtime: Runtime[Context]) -> dict[str, Any]:
-        model = load_chat_model(runtime.context.model).bind_tools(tools)
+        model = load_chat_model_with_fallbacks(runtime.context.model, runtime.context.fallback_models).bind_tools(tools)
         system = SHOP_SYSTEM_PROMPT.format(
             system_time=datetime.now(tz=UTC).isoformat(),
             preferences=state.preferences or "none known",

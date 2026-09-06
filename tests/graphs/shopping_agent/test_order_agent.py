@@ -43,7 +43,7 @@ async def test_answer_emits_order_status_card() -> None:
         async def ainvoke(self, messages):
             return AIMessage(content="Your order is on its way.")
 
-    nodes_mod.load_chat_model = lambda name: _FakeModel()
+    nodes_mod.load_chat_model_with_fallbacks = lambda name, _fallbacks=None: _FakeModel()
     state = OrderState(
         messages=[HumanMessage(content="where is my order?")],
         orders=[

@@ -12,7 +12,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.runtime import Runtime
 
 from shared.memory import MemoryStore, MemoryWriteRejected
-from shared.models import load_chat_model
+from shared.models import load_chat_model_with_fallbacks
 from shopping_agent.prompts import MEMORY_EXTRACTION_PROMPT
 from shopping_agent.state import Context, State
 
@@ -39,7 +39,7 @@ async def extract_memory(state: State, config: RunnableConfig, runtime: Runtime[
     if not transcript:
         return {}
 
-    model = load_chat_model(runtime.context.model)
+    model = load_chat_model_with_fallbacks(runtime.context.model, runtime.context.fallback_models)
     response = await model.ainvoke([SystemMessage(MEMORY_EXTRACTION_PROMPT), HumanMessage(transcript)])
     text = response.content if isinstance(response.content, str) else ""
     try:

@@ -48,6 +48,8 @@ class Context:
     """Per-run configuration (override via the run's context parameter)."""
 
     model: str = "openai/gpt-4o-mini"
+    # Circular fallback chain (provider/model strings); empty = no fallback.
+    fallback_models: list[str] = field(default_factory=list)
     max_quantity_per_line: int = 5
     max_cart_lines: int = 20
     enable_memory: bool = True

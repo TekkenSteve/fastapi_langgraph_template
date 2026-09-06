@@ -102,6 +102,11 @@ class AppSettings(EnvBase):
     # run migrations out-of-band via `make migrate-up`.
     RUN_MIGRATIONS_ON_STARTUP: bool = True
 
+    # Thread auto-naming: first user message -> placeholder title -> background
+    # LLM title. Needs the provider key for THREAD_NAMING_MODEL in env.
+    THREAD_NAMING_ENABLED: bool = True
+    THREAD_NAMING_MODEL: str = "openai/gpt-4o-mini"
+
     # Logging
     LOG_LEVEL: UpperStr = "INFO"
     LOG_VERBOSITY: LowerStr = "verbose"

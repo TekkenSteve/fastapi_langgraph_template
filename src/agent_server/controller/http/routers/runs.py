@@ -30,6 +30,7 @@ from agent_server.usecase.execution.run_waiters import TERMINAL_STATES, encode_o
 from agent_server.usecase.execution.status_compat import validate_run_status
 from agent_server.usecase.streaming.broker import broker_manager
 from agent_server.usecase.streaming.streaming_service import streaming_service
+from agent_server.usecase.thread_naming import maybe_name_thread
 
 router = APIRouter(tags=["Thread Runs"], dependencies=auth_dependency)
 
@@ -130,6 +131,10 @@ async def create_run(
 
     _run_id, run, _job = await _prepare_run(session, thread_id, request, user, initial_status="pending")
 
+    # First user message names the thread (placeholder now, LLM title in background).
+    if request.input is not None:
+        await maybe_name_thread(thread_id, request.input)
+
     return run
 
 
@@ -162,6 +167,9 @@ async def create_and_stream_run(
         await _apply_create_run_auth(user, thread_id, request)
 
         run_id, run, _job = await _prepare_run(session, thread_id, request, user, initial_status="pending")
+
+        if request.input is not None:
+            await maybe_name_thread(thread_id, request.input)
 
     # Default to cancel on disconnect - this matches user expectation that clicking
     # "Cancel" in the frontend will stop the backend task. Users can explicitly

@@ -6,7 +6,7 @@ from langchain_core.messages import SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.runtime import Runtime
 
-from shared.models import load_chat_model
+from shared.models import load_chat_model_with_fallbacks
 from shop.backends import ShopBackend
 from shopping_agent.state import Context
 from shopping_agent.subgraphs.order_agent.state import OrderState
@@ -40,7 +40,7 @@ async def answer_orders(state: OrderState, runtime: Runtime[Context]) -> dict[st
     lines = (
         "\n".join(f"- {o['order_id']} ({o['status']}): {len(o['lines'])} item(s)" for o in state.orders) or "no orders"
     )
-    model = load_chat_model(runtime.context.model)
+    model = load_chat_model_with_fallbacks(runtime.context.model, runtime.context.fallback_models)
     response = await model.ainvoke([SystemMessage(ANSWER_PROMPT.format(orders=lines)), *state.messages])
 
     update: dict[str, Any] = {"messages": [response]}

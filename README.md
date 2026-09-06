@@ -13,6 +13,8 @@ It speaks the [Agent Protocol](https://github.com/langchain-ai/agent-protocol) (
 - **Observability**: structlog + correlation IDs, OpenTelemetry fan-out (Langfuse / Phoenix / OTLP), Prometheus metrics
 - **Graph factories**: compile graphs per-request with user/config context
 - **Clean architecture**: layered `src/agent_server/` package, wiring centralized in `app/main.py`
+- **LLM fallback chains**: `Context.fallback_models` degrades across providers on rate limits/5xx (graphs demo it)
+- **Thread auto-naming**: first message sets a placeholder title instantly; a background LLM call refines it (atomic claim, concurrency-safe)
 
 ## Quick start
 

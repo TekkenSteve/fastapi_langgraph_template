@@ -33,6 +33,8 @@ class Context:
     """Per-run configuration (override via the run's context parameter)."""
 
     model: str = "openai/gpt-4o-mini"
+    # Circular fallback chain (provider/model strings); empty = no fallback.
+    fallback_models: list[str] = field(default_factory=list)
     # Guardrail: a staged price move beyond this percentage is refused.
     max_price_move_pct: float = 20.0
     # Analytics budgets (read-only analysis queries).
