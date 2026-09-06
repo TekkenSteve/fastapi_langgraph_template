@@ -15,6 +15,7 @@ It speaks the [Agent Protocol](https://github.com/langchain-ai/agent-protocol) (
 - **Clean architecture**: layered `src/agent_server/` package, wiring centralized in `app/main.py`
 - **LLM fallback chains**: `Context.fallback_models` degrades across providers on rate limits/5xx (graphs demo it)
 - **Thread auto-naming**: first message sets a placeholder title instantly; a background LLM call refines it (atomic claim, concurrency-safe)
+- **Rate limiting**: per-identity limits via the `limits` library — tighter tier on run/streaming endpoints, Redis-backed across replicas when the broker is enabled (opt-in: `RATE_LIMIT_ENABLED`)
 
 ## Quick start
 

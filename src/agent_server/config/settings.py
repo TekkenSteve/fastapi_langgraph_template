@@ -102,6 +102,12 @@ class AppSettings(EnvBase):
     # run migrations out-of-band via `make migrate-up`.
     RUN_MIGRATIONS_ON_STARTUP: bool = True
 
+    # Per-identity rate limiting (auth/rate_limit.py). Runs/streaming endpoints
+    # get the tighter tier; health/probes are exempt.
+    RATE_LIMIT_ENABLED: bool = False
+    RATE_LIMIT_DEFAULT: str = "200/minute"
+    RATE_LIMIT_RUNS: str = "30/minute"
+
     # Thread auto-naming: first user message -> placeholder title -> background
     # LLM title. Needs the provider key for THREAD_NAMING_MODEL in env.
     THREAD_NAMING_ENABLED: bool = True

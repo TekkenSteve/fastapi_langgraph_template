@@ -57,7 +57,7 @@ Inner layers never import outer ones. Wiring happens once, in `app/main.py` (`cr
 | SQL, tables, pools, alembic, graph module loading | `repo/` | `database.py` (dual pools), `orm.py`, `graphs/langgraph_service.py` |
 | a business rule or run/streaming orchestration | `usecase/` | `assistant_service.py`, `execution/`, `streaming/`, `cron/` |
 | an HTTP status, request/response shape, ASGI middleware | `controller/http/` | `routers/*.py`, `middleware/` |
-| authentication/authorization policy | `auth/` | `handlers.py` (`@auth.on` registry), `middleware.py`, `enforcement.py` |
+| authentication/authorization policy | `auth/` | `handlers.py` (`@auth.on` registry), `middleware.py`, `enforcement.py`, `rate_limit.py` |
 | infrastructure with no domain knowledge | `infra/` | `redis.py`, `sse.py`, `observability/`, `logging.py` |
 | env vars and `langgraph.json` parsing | `config/` | `settings.py`, `graph_config.py` |
 | lifespan, router registration, app assembly | `app/` | `main.py`, `route_merger.py`, `app_loader.py` |

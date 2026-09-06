@@ -49,6 +49,7 @@ dependencies = [
     # Cron expression parsing
     "croniter>=6.0.0",
     "deepagents>=0.7.13",
+    "limits>=5.8.0",
 ]
 
 [build-system]

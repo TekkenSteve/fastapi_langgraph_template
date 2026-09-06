@@ -6,7 +6,7 @@ from typing import Any
 
 import structlog
 from asgi_correlation_id import CorrelationIdMiddleware
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute, APIRouter
@@ -319,14 +319,19 @@ def _include_core_routers(app: FastAPI) -> None:
     Args:
         app: FastAPI application instance
     """
+    # Rate limits: runs/streaming endpoints hold LLM connections open and get
+    # the tighter tier; everything else gets the generous default. Health and
+    # probes are exempt. Disabled unless RATE_LIMIT_ENABLED=true.
+    from agent_server.auth.rate_limit import rate_limit_default, rate_limit_runs
+
     app.include_router(health_router)
-    app.include_router(assistants_router)
-    app.include_router(threads_router)
-    app.include_router(runs_router)
-    app.include_router(stateless_runs_router)
-    app.include_router(crons_router)
-    app.include_router(store_router)
-    app.include_router(event_streaming_router)
+    app.include_router(assistants_router, dependencies=[Depends(rate_limit_default)])
+    app.include_router(threads_router, dependencies=[Depends(rate_limit_default)])
+    app.include_router(runs_router, dependencies=[Depends(rate_limit_runs)])
+    app.include_router(stateless_runs_router, dependencies=[Depends(rate_limit_runs)])
+    app.include_router(crons_router, dependencies=[Depends(rate_limit_default)])
+    app.include_router(store_router, dependencies=[Depends(rate_limit_default)])
+    app.include_router(event_streaming_router, dependencies=[Depends(rate_limit_runs)])
 
     # Attach @auth.on dispatch from the route registry. Routes must opt out
     # explicitly; forgetting the in-body call no longer disables authorization.
