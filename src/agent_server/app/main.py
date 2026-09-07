@@ -33,6 +33,7 @@ from agent_server.controller.http.routers.assistants import router as assistants
 from agent_server.controller.http.routers.crons import router as crons_router
 from agent_server.controller.http.routers.event_streaming import router as event_streaming_router
 from agent_server.controller.http.routers.health import router as health_router
+from agent_server.controller.http.routers.mcp import router as mcp_router
 from agent_server.controller.http.routers.runs import router as runs_router
 from agent_server.controller.http.routers.stateless_runs import router as stateless_runs_router
 from agent_server.controller.http.routers.store import router as store_router
@@ -332,6 +333,9 @@ def _include_core_routers(app: FastAPI) -> None:
     app.include_router(crons_router, dependencies=[Depends(rate_limit_default)])
     app.include_router(store_router, dependencies=[Depends(rate_limit_default)])
     app.include_router(event_streaming_router, dependencies=[Depends(rate_limit_runs)])
+    if settings.app.ENV_MODE == "LOCAL":
+        # Debug probe reveals internal topology — local/dev only.
+        app.include_router(mcp_router)
 
     # Attach @auth.on dispatch from the route registry. Routes must opt out
     # explicitly; forgetting the in-body call no longer disables authorization.

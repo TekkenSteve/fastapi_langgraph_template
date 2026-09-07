@@ -4,10 +4,13 @@ Shared tools (web_search) come from shared/tools/; only graph-specific
 helpers live here.
 """
 
+import structlog
 from langchain_core.tools import tool
 from pydantic import Field
 
 from shared.presentation import PresentationComponent, PresentationPayload, make_presentation_tool
+
+logger = structlog.get_logger(__name__)
 
 
 class PresentPlanPayload(PresentationPayload):

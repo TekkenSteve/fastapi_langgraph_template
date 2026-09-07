@@ -185,12 +185,12 @@ class TestClassifyFactory:
         assert kwargs == {"runtime": mock_runtime, "config": config}
 
     def test_classify_three_params_raises(self) -> None:
-        """3+ params → ValueError."""
+        """3+ core params → ValueError (duplicate config)."""
 
         def make_graph(a: ServerRuntime, b: dict, c: str) -> None:
             pass
 
-        with pytest.raises(ValueError, match="must take 0, 1, or 2 arguments"):
+        with pytest.raises(ValueError, match="at most one is allowed"):
             _classify_factory(make_graph)
 
     def test_classify_two_runtime_params_raises(self) -> None:
@@ -203,12 +203,12 @@ class TestClassifyFactory:
             _classify_factory(make_graph)
 
     def test_classify_two_unannotated_params_raises(self) -> None:
-        """2 params with no annotations → ValueError (neither is ServerRuntime)."""
+        """2 unannotated params → two config roles → ValueError."""
 
         def make_graph(a, b) -> None:
             pass
 
-        with pytest.raises(ValueError, match="neither is annotated as ServerRuntime"):
+        with pytest.raises(ValueError, match="at most one is allowed"):
             _classify_factory(make_graph)
 
 
@@ -450,6 +450,28 @@ class TestGenerateGraph:
             assert result is sentinel
 
     @pytest.mark.asyncio
+    async def test_coroutine_result_is_not_redispatched(self) -> None:
+        """Document the invariant the service layer relies on: generate_graph
+        dispatches the value type ONCE — a coroutine's result is yielded as-is,
+        so an async factory returning an async CM must be awaited by the caller
+        first (langgraph_service does this before generate_graph)."""
+        entered = []
+
+        class _AsyncCM:
+            async def __aenter__(self):
+                entered.append(True)
+                return "graph"
+
+            async def __aexit__(self, *args):
+                return None
+
+        async def _factory():
+            return _AsyncCM()
+
+        async with generate_graph(_factory(), "g") as resolved:
+            assert resolved is not None
+        assert not entered  # CM was yielded un-entered — caller must await first
+
     async def test_coroutine(self) -> None:
         """Coroutines are awaited and yielded."""
         sentinel = object()

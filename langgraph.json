@@ -17,5 +17,14 @@
         "org_id"
       ]
     }
+  },
+  "mcp_servers": {
+    "acme-kb": {
+      "transport": "stdio",
+      "command": "python",
+      "args": [
+        "src/shop/mcp_server.py"
+      ]
+    }
   }
 }

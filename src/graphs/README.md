@@ -143,9 +143,33 @@ is the server's job, your graph code doesn't need to know.
 | Package | Paradigm | Demonstrates |
 |---|---|---|
 | `shopping_agent/` | **A (canonical)** | the full structure above: gates, structured tool results, fenced payloads, checkout handoff, filtered memory + auto-extraction, generative UI (`present_*`), `subgraphs/` — its backend port lives in `src/shop/` |
-| `research_agent/` | **B (canonical)** | composed agent: declared subagents, audit middleware, skills via `SkillRouterMiddleware` (per-request top-k selection), `present_plan` generative UI, deepagents built-ins |
+| `research_agent/` | **B (canonical)** | composed agent: declared subagents, audit middleware, skills via `SkillRouterMiddleware` (per-request top-k selection), `present_plan` generative UI, MCP tools by name from the deployment registry (see below), deepagents built-ins |
 | `merchant_agent/` | A | staged writes (stage → review → approve → apply) with apply-time guardrail recheck, budgeted analytics, HITL approval — the staff-facing counterpart of shopping_agent |
 | `shared/` | — | cross-graph capability library |
+
+### MCP tools (declare + injected)
+
+Same shape as LangGraph's own DI (checkpointer/store/runtime are injected; so
+are MCP tools):
+
+- `langgraph.json` declares which MCP servers exist (`mcp_servers`, top-level
+  deployment registry).
+- The graph's entry module declares consumption: `MCP_SERVERS = ["acme-kb"]`.
+- A factory that accepts `mcp_tools` receives the resolved tools from the
+  framework — the graph contains zero loading logic and imports nothing:
+
+```python
+MCP_SERVERS = ["acme-kb"]
+
+
+async def graph(mcp_tools: list):  # framework always supplies the list
+    return build_my_agent(extra_tools=mcp_tools)
+```
+
+MCP-only factories resolve at load time (built once); factories that also take
+config/runtime stay per-request. Tool names are namespaced by server name,
+failures degrade to zero tools (inspect with `GET /mcp/servers`), and
+`MCP_SERVERS__<GRAPH_ID>` overrides per deployment.
 
 ### Paradigm boundary: where skills live
 

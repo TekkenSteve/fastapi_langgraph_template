@@ -162,6 +162,7 @@ EXEMPT_PATHS: Final[frozenset[str]] = frozenset(
         "/docs",
         "/redoc",
         "/openapi.json",
+        "/mcp/servers",
         "/docs/oauth2-redirect",
     }
 )

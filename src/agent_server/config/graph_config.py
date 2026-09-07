@@ -150,6 +150,21 @@ def load_config() -> dict | None:
         return None
 
 
+def load_mcp_servers_config() -> dict[str, dict]:
+    """Load the MCP server registry from langgraph.json (top-level `mcp_servers`).
+
+    Deployment-level registry: which MCP servers exist in this environment.
+    Graphs consume entries by name (see src/graphs/shared/tools/mcp.py).
+    """
+    config = load_config()
+    if not config:
+        return {}
+    servers = config.get("mcp_servers")
+    if not isinstance(servers, dict):
+        return {}
+    return servers
+
+
 def load_http_config() -> HttpConfig | None:
     """Load HTTP config from langgraph.json.
 

@@ -19,6 +19,7 @@ import inspect
 import typing
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Any, Literal, cast, get_args, get_origin
 
 import structlog
@@ -62,6 +63,7 @@ _HookType = Callable[["_RunnableConfig", "ServerRuntime"], dict[str, Any]]
 # Maps graph_id → a callable that produces kwargs for the factory function.
 # Populated by ``classify_factory()`` at graph load time.
 _FACTORY_KWARGS: dict[str, _HookType] = {}
+
 
 # Maps graph_id → the ``T`` from ``ServerRuntime[T]`` (or ``None`` if
 # the factory uses plain ``ServerRuntime`` without parameterization).
@@ -176,7 +178,7 @@ def _extract_context_type(annotation: Any) -> type | None:
 def _resolve_hints(fn: Callable) -> dict[str, Any]:
     """Resolve string annotations using the function's module globals + runtime types."""
     try:
-        return typing.get_type_hints(fn, localns=_RUNTIME_LOCALNS)
+        return typing.get_type_hints(fn, localns=_RUNTIME_LOCALNS, include_extras=True)
     except (NameError, AttributeError) as exc:
         logger.debug("graph_factory_hint_resolution_failed", fn=fn, exc=str(exc))
         return {}
@@ -185,57 +187,73 @@ def _resolve_hints(fn: Callable) -> dict[str, Any]:
 def _classify_factory(fn: Callable) -> tuple[_HookType | None, type | None]:
     """Classify a graph factory by its parameter signature.
 
+    Per-parameter classification (the FastAPI ``analyze_param`` shape): each
+    parameter gets a role — ``config`` or ``runtime`` (annotated
+    ``ServerRuntime``) — then one uniform assembler builds the invocation kwargs.
+
     Returns a tuple of:
     - A callable that, given ``(config, server_runtime)``, produces the
-      ``**kwargs`` dict to pass to the factory. ``None`` for 0-arg factories.
+      ``**kwargs`` dict to pass to the factory. ``None`` for 0-param factories.
     - The context type ``T`` from ``ServerRuntime[T]`` (or ``None``).
 
     Raises:
-        ValueError: If the factory has 3+ parameters or ambiguous runtime params.
+        ValueError: On duplicate config/runtime params.
     """
-    sig = inspect.signature(fn)
-    params = list(sig.parameters.values())
     hints = _resolve_hints(fn)
-
-    def _annotation(p: inspect.Parameter) -> Any:
-        return hints.get(p.name, p.annotation)
-
-    if len(params) == 0:
-        # 0-arg factory — no hook needed
+    specs = [_classify_param(p, hints) for p in inspect.signature(fn).parameters.values()]
+    if not specs:
         return None, None
-    elif len(params) == 1:
-        ann = _annotation(params[0])
-        if _is_runtime_annotation(ann):
-            ctx_type = _extract_context_type(ann)
-            return lambda config, runtime: {params[0].name: runtime}, ctx_type
-        return lambda config, runtime: {params[0].name: config}, None
-    elif len(params) == 2:
-        # Detect which param is runtime by annotation; the other is config.
-        rt_indices = [i for i, p in enumerate(params) if _is_runtime_annotation(_annotation(p))]
-        if len(rt_indices) == 1:
-            rt_idx = rt_indices[0]
-            cfg_idx = 1 - rt_idx
-        elif len(rt_indices) == 0:
-            raise ValueError(
-                f"Graph factory {fn} has 2 parameters but neither is annotated as "
-                f"ServerRuntime. For a 2-param factory, one parameter must be typed as "
-                f"ServerRuntime and the other as RunnableConfig."
-            )
-        else:
-            raise ValueError(
-                f"Graph factory {fn} has 2 parameters both annotated as ServerRuntime. "
-                f"Expected one ServerRuntime and one RunnableConfig."
-            )
-        ctx_type = _extract_context_type(_annotation(params[rt_idx]))
-        return lambda config, runtime: {
-            params[rt_idx].name: runtime,
-            params[cfg_idx].name: config,
-        }, ctx_type
-    else:
+
+    _validate_specs(fn, specs)
+
+    def hook(config: _RunnableConfig, runtime: ServerRuntime) -> dict[str, Any]:
+        return {spec.name: _param_value(spec, config, runtime) for spec in specs}
+
+    ctx_type = next(
+        (_extract_context_type(spec.annotation) for spec in specs if spec.kind == "runtime"),
+        None,
+    )
+    return hook, ctx_type
+
+
+@dataclass(frozen=True)
+class _ParamSpec:
+    """One factory parameter and its role."""
+
+    name: str
+    kind: str  # "config" | "runtime"
+    annotation: Any
+
+
+def _classify_param(p: inspect.Parameter, hints: dict[str, Any]) -> _ParamSpec:
+    """One parameter in, its role out (FastAPI's analyze_param shape)."""
+    annotation = hints.get(p.name, p.annotation)
+    if _is_runtime_annotation(annotation):
+        return _ParamSpec(p.name, "runtime", annotation)
+    return _ParamSpec(p.name, "config", annotation)
+
+
+def _validate_specs(fn: Callable, specs: list[_ParamSpec]) -> None:
+    """At most one config and one runtime parameter; injectables are free."""
+    configs = [s.name for s in specs if s.kind == "config"]
+    runtimes = [s.name for s in specs if s.kind == "runtime"]
+    if len(configs) > 1:
         raise ValueError(
-            f"Graph factory {fn} must take 0, 1, or 2 arguments. "
-            f"Got {len(params)} parameters: {[p.name for p in params]}"
+            f"Graph factory {fn} has {len(configs)} config parameters {configs}; "
+            f"at most one is allowed. For a 2-param factory, one parameter must "
+            f"be typed as ServerRuntime."
         )
+    if len(runtimes) > 1:
+        raise ValueError(
+            f"Graph factory {fn} has {len(runtimes)} parameters both annotated as "
+            f"ServerRuntime {runtimes}. Expected one ServerRuntime and one "
+            f"RunnableConfig."
+        )
+
+
+def _param_value(spec: _ParamSpec, config: _RunnableConfig, runtime: ServerRuntime) -> Any:
+    """Resolve one parameter's invocation value."""
+    return config if spec.kind == "config" else runtime
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +264,11 @@ def _classify_factory(fn: Callable) -> tuple[_HookType | None, type | None]:
 def is_factory(graph_id: str) -> bool:
     """Return ``True`` if *graph_id* was classified as a factory that accepts arguments."""
     return graph_id in _FACTORY_KWARGS
+
+
+def get_factory_hook(graph_id: str) -> _HookType | None:
+    """The dispatch hook for a graph, including load-time-only (mcp_tools) hooks."""
+    return _FACTORY_KWARGS.get(graph_id)
 
 
 def is_for_execution(access_context: AccessContext) -> bool:

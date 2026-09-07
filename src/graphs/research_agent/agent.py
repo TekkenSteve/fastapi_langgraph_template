@@ -10,6 +10,7 @@ else goes to the ephemeral state backend (the agent's scratch space).
 """
 
 import operator
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated, NotRequired
 
@@ -17,6 +18,7 @@ from deepagents import DeepAgentState, create_deep_agent
 from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.filesystem import FilesystemBackend
 from deepagents.backends.state import StateBackend
+from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
 
 from research_agent.prompts import RESEARCH_SYSTEM_PROMPT
@@ -38,7 +40,7 @@ class ResearchAgentState(DeepAgentState):
 SKILLS_DIR = Path(__file__).parent / "skills"
 
 
-def build_research_agent(model: str = DEFAULT_MODEL) -> CompiledStateGraph:
+def build_research_agent(mcp_tools: Sequence[BaseTool] = (), model: str = DEFAULT_MODEL) -> CompiledStateGraph:
     skills_backend = FilesystemBackend(root_dir=SKILLS_DIR, virtual_mode=True)
     backend = CompositeBackend(
         default=StateBackend(),  # scratch space stays ephemeral per run
@@ -58,7 +60,7 @@ def build_research_agent(model: str = DEFAULT_MODEL) -> CompiledStateGraph:
     # (ls/read_file/write_file/edit_file), and the `task` delegation tool.
     return create_deep_agent(
         model=model,
-        tools=[web_search, think_tool, make_plan_tool()],
+        tools=[web_search, think_tool, make_plan_tool(), *mcp_tools],
         system_prompt=RESEARCH_SYSTEM_PROMPT,
         subagents=SUBAGENTS,
         middleware=[AuditLogMiddleware(), skills],
