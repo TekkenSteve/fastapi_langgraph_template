@@ -57,3 +57,11 @@ entry in the registry.
 
 - v1 APIs (`CopilotRuntime`, `useCoAgentStateRender`, `@copilotkit/react-ui`)
   are deprecated in 1.70.x — this demo deliberately uses only v2 exports.
+
+## MCP debugging
+
+`make dev` also starts two MCP services: `shop-mcp` (the shop domain's MCP
+surface over SSE, :8081) and the official MCP Inspector (:6274). In the
+Inspector UI pick transport=SSE and URL http://shop-mcp:8081/sse to call the
+KB tools interactively. `GET /mcp/servers` on the agent server probes the
+registry non-interactively.

@@ -14,3 +14,38 @@ services:
 
   # Keep Redis defined in the base file; the app just won't use it
   # (REDIS_BROKER_ENABLED=false), avoiding compose dependency drift.
+
+  # The shop domain's MCP surface over SSE — so the inspector container can
+  # reach it (stdio needs to spawn a process, impossible across containers).
+  shop-mcp:
+    image: fastapi_langgraph_template-app
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile
+    command: ["python", "src/shop/mcp_server.py"]
+    volumes:
+      - ./src:/app/src:ro
+    environment:
+      - MCP_TRANSPORT=sse
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8081
+    ports:
+      - "8081:8081"
+
+  # Official MCP Inspector — interactive debugging UI for MCP servers.
+  # Open http://localhost:6274, set transport=SSE, url=http://shop-mcp:8081/sse
+  inspector:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.inspector
+    environment:
+      - HOST=0.0.0.0
+      # Dev-only isolated container: the inspector's backend spawns processes,
+      # so upstream requires this explicit override to bind beyond loopback.
+      - DANGEROUSLY_BIND_ALL_INTERFACES=true
+    ports:
+      - "6274:6274"
+      - "6275:6275"
+      - "6277:6277"
+    depends_on:
+      - shop-mcp
