@@ -44,6 +44,9 @@ lint:
 type-check:
 	uv run ty check src/agent_server/ --exit-zero-on-warning
 
+arch-check:
+	uv run python scripts/check_architecture.py
+
 security:
 	uv run bandit -c pyproject.toml -r src/agent_server/
 
@@ -79,6 +82,7 @@ migrate-up:
 
 ci-check: format lint
 	uv run ty check src/agent_server/ --exit-zero-on-warning
+	uv run python scripts/check_architecture.py
 	-uv run bandit -c pyproject.toml -r src/agent_server/
 	$(MAKE) test
 	@echo ""

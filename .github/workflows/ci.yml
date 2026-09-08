@@ -76,7 +76,14 @@ jobs:
       - name: Migrate
         run: cd src/agent_server && uv run alembic -c alembic.ini upgrade head
       - name: Test
-        run: uv run pytest tests/unit tests/integration
+        run: uv run pytest tests/unit tests/integration --cov=src/agent_server --cov-report=xml --cov-report=term
+      - name: Upload coverage
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
   docker-build:
     name: docker build

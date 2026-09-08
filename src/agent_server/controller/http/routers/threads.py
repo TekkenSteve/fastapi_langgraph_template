@@ -35,13 +35,13 @@ from agent_server.domain import (
     User,
 )
 from agent_server.domain.errors import CONFLICT, NOT_FOUND, AgentProtocolError
+from agent_server.domain.run_config import strip_pinned_config_keys
 from agent_server.repo.database import db_manager
 from agent_server.repo.orm import Run as RunORM
 from agent_server.repo.orm import Thread as ThreadORM
 from agent_server.repo.orm import ThreadTTL as ThreadTTLORM
 from agent_server.repo.orm import get_session
 from agent_server.usecase.execution.active_runs import active_runs
-from agent_server.usecase.execution.run_utils import strip_pinned_config_keys
 from agent_server.usecase.streaming.streaming_service import streaming_service
 from agent_server.usecase.thread_state_service import ThreadStateService
 from agent_server.usecase.thread_ttl import get_thread_ttl_config, prune_expired_threads_for_user

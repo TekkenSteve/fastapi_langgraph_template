@@ -58,7 +58,11 @@ def _memory_storage():
 async def _enforce(request: Request, user: User, tier: str, limit_expr: str) -> None:
     if not settings.app.RATE_LIMIT_ENABLED:
         return
-    key = f"user:{user.identity}" if user.identity != "anonymous" else f"ip:{request.client.host if request.client else 'unknown'}"
+    key = (
+        f"user:{user.identity}"
+        if user.identity != "anonymous"
+        else f"ip:{request.client.host if request.client else 'unknown'}"
+    )
     limit = parse(limit_expr)
     if not _get_limiter().hit(limit, tier, key):
         logger.warning("rate_limit_exceeded", tier=tier, key=key, path=request.url.path)

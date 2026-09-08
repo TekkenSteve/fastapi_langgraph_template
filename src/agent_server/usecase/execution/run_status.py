@@ -14,11 +14,11 @@ import structlog
 from sqlalchemy import CursorResult, exists, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_server.domain.status_compat import validate_run_status, validate_thread_status
 from agent_server.infra.serializers import GeneralSerializer
 from agent_server.repo.orm import Run as RunORM
 from agent_server.repo.orm import Thread as ThreadORM
 from agent_server.repo.orm import _get_session_maker
-from agent_server.usecase.execution.status_compat import validate_run_status, validate_thread_status
 
 logger = structlog.getLogger(__name__)
 _serializer = GeneralSerializer()

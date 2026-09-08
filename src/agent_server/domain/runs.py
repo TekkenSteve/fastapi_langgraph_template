@@ -12,7 +12,7 @@ from pydantic import (
     model_validator,
 )
 
-from agent_server.usecase.execution.status_compat import validate_run_status
+from agent_server.domain.status_compat import validate_run_status
 
 # Constraints for ``RunCreate.metadata`` keys/values, enforced at request
 # time so the OpenAPI schema is honest about what reaches OTEL.  Without

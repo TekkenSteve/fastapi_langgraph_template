@@ -24,6 +24,7 @@ from langgraph.pregel import Pregel
 from langgraph_sdk.auth.types import BaseUser
 
 from agent_server.config.constants import ASSISTANT_NAMESPACE_UUID
+from agent_server.domain.run_config import strip_pinned_config_keys
 from agent_server.domain.user import User
 from agent_server.infra.observability.base import (
     get_tracing_callbacks,
@@ -39,7 +40,6 @@ from agent_server.repo.graphs.graph_factory import (
     invoke_factory,
     is_factory,
 )
-from agent_server.usecase.execution.run_utils import strip_pinned_config_keys
 
 State = TypeVar("State")
 logger = structlog.get_logger(__name__)

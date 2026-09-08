@@ -19,6 +19,7 @@ from agent_server.config.settings import settings
 from agent_server.domain import Run, RunCreate, RunStatus, User
 from agent_server.domain.enums import RunCancellationAction
 from agent_server.domain.errors import CONFLICT, NOT_FOUND, SSE_RESPONSE
+from agent_server.domain.status_compat import validate_run_status
 from agent_server.infra.sse import create_end_event, get_sse_headers, make_sse_response, sse_to_bytes
 from agent_server.repo.orm import Run as RunORM
 from agent_server.repo.orm import Thread as ThreadORM
@@ -27,7 +28,6 @@ from agent_server.usecase.execution.active_runs import active_runs
 from agent_server.usecase.execution.run_preparation import _prepare_run
 from agent_server.usecase.execution.run_status import interrupt_unowned_run
 from agent_server.usecase.execution.run_waiters import TERMINAL_STATES, encode_output, heartbeat_wait_body
-from agent_server.usecase.execution.status_compat import validate_run_status
 from agent_server.usecase.streaming.broker import broker_manager
 from agent_server.usecase.streaming.streaming_service import streaming_service
 from agent_server.usecase.thread_naming import maybe_name_thread

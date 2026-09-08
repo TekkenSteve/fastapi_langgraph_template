@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
-from agent_server.usecase.execution.status_compat import validate_thread_status
+from agent_server.domain.status_compat import validate_thread_status
 
 # Upper bound keeping now + timedelta(minutes=ttl) finite and timedelta-safe
 # (timedelta.max is ~1.44e9 minutes); rejects inf/1e308 at validation time.

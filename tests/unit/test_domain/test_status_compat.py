@@ -2,7 +2,7 @@
 
 import pytest
 
-from agent_server.usecase.execution.status_compat import (
+from agent_server.domain.status_compat import (
     validate_run_status,
     validate_thread_status,
 )

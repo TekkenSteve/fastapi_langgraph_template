@@ -1,6 +1,6 @@
 """Unit tests for client-config sanitization (strip_pinned_config_keys)."""
 
-from agent_server.usecase.execution.run_utils import strip_pinned_config_keys
+from agent_server.domain.run_config import strip_pinned_config_keys
 
 
 class TestStripPinnedConfigKeys:
