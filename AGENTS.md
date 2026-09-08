@@ -95,7 +95,8 @@ Read `src/graphs/README.md` first — it defines the two authoring paradigms
 (`shopping_agent/` / `research_agent/`), and the growth rules.
 
 1. Create `src/graphs/<name>/` following the canonical layout.
-2. Register in `langgraph.json` under `graphs`, pointing at `<name>/graph.py`.
+2. Register in `langgraph.json` under `graphs`, pointing at `<name>/graph.py`,
+   and add `"src/graphs/<name>"` to the hatch `packages` list in pyproject.toml.
 3. Restart. A default assistant with a deterministic UUID (`uuid5(namespace, graph_id)`)
    is created automatically.
 4. Unit tests go in `tests/graphs/<name>/` and run with `make test`.
