@@ -50,7 +50,7 @@ services:
 
   # Redis - enables multi-instance SSE streaming with pub/sub + replay
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     restart: unless-stopped
     ports:
       - "${REDIS_PUBLISH_PORT:-6379}:6379"
