@@ -51,6 +51,7 @@ COPY --from=builder /usr/local/bin/ /usr/local/bin/
 # Copy runtime assets required by the app
 COPY langgraph.json ./langgraph.json
 COPY src/graphs/ ./src/graphs/
+COPY src/shop/ ./src/shop/
 
 EXPOSE 2026
 

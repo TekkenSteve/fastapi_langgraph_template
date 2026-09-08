@@ -68,6 +68,21 @@ harden; the registration path never changes.
 | `def graph(): ...` (0-arg factory) | module must stay import-safe (e.g. model client built at startup) |
 | `def graph(runtime: ServerRuntime): ...` | per-request rebuild (per-user tools/models — see `tests/e2e/graphs/factory/`) |
 
+### Standalone debugging (`__main__.py`)
+
+Every graph level runs standalone — the fastest debug loop (no server, no DB;
+MemorySaver stands in for Postgres):
+
+```bash
+uv run python -m shopping_agent                        # paradigm A, full graph
+uv run python -m shopping_agent.subgraphs.order_agent  # subgraph in isolation
+uv run python -m merchant_agent                        # staged writes flow
+uv run python -m research_agent                        # paradigm B, deepagents
+```
+
+Each prints the last assistant message; the subgraph also prints its
+presentation blocks.
+
 ## The shared layer
 
 `shared/` holds capabilities used by **two or more** graphs:
