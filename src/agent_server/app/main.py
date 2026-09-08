@@ -391,6 +391,7 @@ def create_app() -> FastAPI:
             _apply_auth_to_routes(application, auth_dependency)
     else:
         application = FastAPI(
+            swagger_ui_parameters={"tryItOutEnabled": True},
             title=settings.app.PROJECT_NAME,
             description="Production-ready Agent Protocol server",
             version=settings.app.VERSION,

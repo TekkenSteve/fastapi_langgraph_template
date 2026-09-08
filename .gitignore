@@ -84,7 +84,8 @@ blob-report/
 
 # ---------- IDE / editors ----------
 .idea/
-.vscode/
+.vscode/*
+!.vscode/launch.json
 *.swp
 *.swo
 *~
