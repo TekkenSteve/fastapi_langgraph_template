@@ -9,7 +9,7 @@
     "merchant_agent": "./src/graphs/merchant_agent/graph.py:graph"
   },
   "http": {
-    "app": "./src/shop/api.py:app"
+    "app": "./src/http_app.py:app"
   },
   "store": {
     "scopes": {

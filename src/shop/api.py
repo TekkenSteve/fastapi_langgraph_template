@@ -1,32 +1,31 @@
-"""Shop REST API — merged into the server via the http.app key in
-langgraph.json.
+"""Shop REST surface — mounted via the http.app composition (src/http_app.py).
 
-This REST surface and the agent (graphs/shopping_agent) share the same
-backend port: a product added through the agent's tools is visible here and
-vice versa. Add your product-facing endpoints in your domain package instead
-of modifying src/agent_server/.
+This surface and the agent (graphs/shopping_agent) share the same backend
+port: a product added through the agent's tools is visible here and vice
+versa. Add your product-facing endpoints in your domain package instead of
+modifying src/agent_server/.
 
 User-scoped endpoints take the identity from the server's auth dependency
 (``require_auth``) — never from client-supplied parameters.
 """
 
-from fastapi import Depends, FastAPI, Query
+from fastapi import APIRouter, Depends, Query
 
 from agent_server.auth.deps import require_auth
 from agent_server.domain.user import User
 from shop.backends import get_backend
 
-app = FastAPI(title="Shop API")
+router = APIRouter(prefix="/shop", tags=["shop"])
 
 
-@app.get("/shop/products")
+@router.get("/products")
 async def list_products(q: str = Query(default="")) -> list[dict]:
     """Public catalog — no auth needed."""
     products = await get_backend().search_products(q, limit=50)
     return [{"id": p.id, "name": p.name, "price": p.price, "description": p.description} for p in products]
 
 
-@app.get("/shop/cart")
+@router.get("/cart")
 async def get_cart(user: User = Depends(require_auth)) -> dict:
     """The caller's own cart. Identity comes from the server's auth layer."""
     cart = await get_backend().get_cart(user.identity)

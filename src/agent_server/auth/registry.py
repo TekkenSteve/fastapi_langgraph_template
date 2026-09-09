@@ -163,6 +163,10 @@ EXEMPT_PATHS: Final[frozenset[str]] = frozenset(
         "/redoc",
         "/openapi.json",
         "/mcp/servers",
+        "/shop/products",  # public catalog
+        "/shop/cart",  # identity via require_auth dependency, not @auth.on
+        "/ml/predict",  # public inference demo
+        "/ml/health",  # model readiness probe
         "/docs/oauth2-redirect",
     }
 )

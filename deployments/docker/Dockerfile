@@ -52,6 +52,8 @@ COPY --from=builder /usr/local/bin/ /usr/local/bin/
 COPY langgraph.json ./langgraph.json
 COPY src/graphs/ ./src/graphs/
 COPY src/shop/ ./src/shop/
+COPY src/ml/ ./src/ml/
+COPY src/http_app.py ./src/http_app.py
 
 EXPOSE 2026
 

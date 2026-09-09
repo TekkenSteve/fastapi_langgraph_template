@@ -1,0 +1,16 @@
+{
+  "name": "house-price",
+  "version": "1.0.0",
+  "description": "Linear model fit on synthetic data (seed=42): price ~ rooms + area + age. Regenerate with: uv run python -m ml.train",
+  "weights": {
+    "rooms": 14.9522,
+    "area_sqm": 3.2049,
+    "age_years": -0.8036
+  },
+  "bias": 19.7482,
+  "unit": "kUSD",
+  "metrics": {
+    "mae_kUSD": 1.611,
+    "n_samples": 500
+  }
+}

@@ -15,6 +15,7 @@ It speaks the [Agent Protocol](https://github.com/langchain-ai/agent-protocol) (
 - **Clean architecture**: layered `src/agent_server/` package, wiring centralized in `app/main.py`
 - **LLM fallback chains**: `Context.fallback_models` degrades across providers on rate limits/5xx (graphs demo it)
 - **Thread auto-naming**: first message sets a placeholder title instantly; a background LLM call refines it (atomic claim, concurrency-safe)
+- **ML serving**: `src/ml/` domain package — ModelBackend protocol (swap joblib/ONNX/API backends), JSON model artifact, `POST /ml/predict`, and the model exposed as an agent tool (merchant's `predict_price`)
 - **Rate limiting**: per-identity limits via the `limits` library — tighter tier on run/streaming endpoints, Redis-backed across replicas when the broker is enabled (opt-in: `RATE_LIMIT_ENABLED`)
 - **MCP tools**: `research_agent` can load tools from any MCP server (`RESEARCH_MCP_SERVERS`, langchain-mcp-adapters); a bundled demo stdio server proves the path
 
@@ -51,6 +52,8 @@ curl -s http://localhost:2026/info
 │   │   └── shared/          #   cross-graph capability library (models, tools, middleware)
 │   │
 │   ├── shop/                # domain package example: backend port + REST surface (api.py)
+│   ├── ml/                  # ML domain: ModelBackend port + artifact + predict surface + agent tool
+│   └── http_app.py          # composition of domain REST surfaces (langgraph.json http.app)
 │   └── agent_server/        # ★ The server (rarely needs changes)
 │       ├── app/             #   composition root: create_app(), lifespan, wiring
 │       ├── config/          #   pydantic-settings groups + langgraph.json loading

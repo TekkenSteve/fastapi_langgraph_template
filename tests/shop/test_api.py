@@ -2,7 +2,7 @@
 
 from fastapi.testclient import TestClient
 
-from shop.api import app
+from http_app import app
 
 
 def test_list_products_returns_catalog() -> None:

@@ -40,6 +40,23 @@ def make_merchant_tools(backend: MerchantBackend) -> list:
     """Build the merchant tool list with the backend bound via closure."""
 
     @tool
+    async def predict_price(
+        rooms: float,
+        area_sqm: float,
+        age_years: float,
+        tool_call_id: Annotated[str, InjectedToolCallId],
+    ) -> Command:
+        """Estimate a fair market price for housing-like listings using the ML model.
+
+        Use before staging a price change on a new listing: returns the model's
+        estimate (kUSD) with model name and version for provenance.
+        """
+        from ml.service import get_service
+
+        result = get_service().predict({"rooms": rooms, "area_sqm": area_sqm, "age_years": age_years})
+        return _msg(json.dumps(result), tool_call_id)
+
+    @tool
     async def get_listing(product_id: str, tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
         """Read a listing before staging any change to it."""
         product = await backend.get_listing(product_id)
@@ -169,4 +186,12 @@ def make_merchant_tools(backend: MerchantBackend) -> list:
             text = text[: ctx.analytics_max_chars] + " ...[truncated]"
         return tool_ok(text, tool_call_id, state_update={"analytics_calls": state.analytics_calls + 1})
 
-    return [get_listing, stage_price_change, get_pending_changes, apply_change, discard_change, analytics_query]
+    return [
+        predict_price,
+        get_listing,
+        stage_price_change,
+        get_pending_changes,
+        apply_change,
+        discard_change,
+        analytics_query,
+    ]

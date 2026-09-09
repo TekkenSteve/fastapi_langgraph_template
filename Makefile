@@ -51,10 +51,10 @@ security:
 	uv run bandit -c pyproject.toml -r src/agent_server/
 
 test:
-	uv run pytest tests/unit tests/integration tests/graphs tests/shop
+	uv run pytest tests/unit tests/integration tests/graphs tests/shop tests/ml
 
 test-cov:
-	uv run pytest tests/unit tests/integration tests/graphs tests/shop --cov=src/agent_server --cov=src/graphs --cov-report=html --cov-report=term
+	uv run pytest tests/unit tests/integration tests/graphs tests/shop tests/ml --cov=src/agent_server --cov=src/graphs --cov-report=html --cov-report=term
 
 deps:
 	docker compose up -d postgres redis
