@@ -73,7 +73,7 @@ def fit() -> tuple[dict[str, float], float, float]:
 
     solved = _solve_linear_system(xtx, xty)
     bias, weights_values = solved[0], solved[1:]
-    weights = dict(zip(keys, weights_values))
+    weights = dict(zip(keys, weights_values, strict=True))
 
     mae = sum(abs((bias + sum(weights[k] * f[k] for k in keys)) - t) for f, t in samples) / len(samples)
     return weights, bias, mae

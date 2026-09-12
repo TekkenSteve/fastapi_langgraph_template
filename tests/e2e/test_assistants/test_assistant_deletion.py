@@ -1,3 +1,4 @@
+import httpx
 import pytest
 
 from tests.e2e._utils import elog, get_e2e_client
@@ -39,11 +40,8 @@ async def test_assistant_deletion_with_active_runs():
     elog("Deleted assistant", {"assistant_id": assistant_id})
 
     # 4. Verify assistant is deleted
-    try:
+    with pytest.raises(httpx.HTTPStatusError):
         await client.assistants.get(assistant_id)
-        pytest.fail("Assistant should have been deleted but still exists")
-    except Exception:
-        pass
 
     # 5. Verify run is also deleted/cancelled
     runs_list = await client.runs.list(thread_id)
@@ -89,11 +87,8 @@ async def test_assistant_deletion_with_completed_runs():
     elog("Deleted assistant with completed runs", {"assistant_id": assistant_id})
 
     # 4. Verify assistant is deleted
-    try:
+    with pytest.raises(httpx.HTTPStatusError):
         await client.assistants.get(assistant_id)
-        pytest.fail("Assistant should have been deleted but still exists")
-    except Exception:
-        pass
 
     # 5. Verify run is also deleted
     runs_list = await client.runs.list(thread_id)
@@ -121,11 +116,8 @@ async def test_assistant_deletion_no_runs():
     elog("Deleted assistant without runs", {"assistant_id": assistant_id})
 
     # 3. Verify assistant is deleted
-    try:
+    with pytest.raises(httpx.HTTPStatusError):
         await client.assistants.get(assistant_id)
-        pytest.fail("Assistant should have been deleted but still exists")
-    except Exception:
-        pass
 
 
 @pytest.mark.e2e
@@ -174,11 +166,8 @@ async def test_assistant_deletion_multiple_runs():
     elog("Deleted assistant with multiple runs", {"assistant_id": assistant_id})
 
     # 4. Verify assistant is deleted
-    try:
+    with pytest.raises(httpx.HTTPStatusError):
         await client.assistants.get(assistant_id)
-        pytest.fail("Assistant should have been deleted but still exists")
-    except Exception:
-        pass
 
     # 5. Verify all runs tied to assistant are deleted
     runs_list = await client.runs.list(thread_id)

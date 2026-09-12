@@ -77,8 +77,6 @@ async def test_human_in_loop_interrupt_resume_e2e():
     run_id = run["run_id"]
 
     # Wait for interrupt
-    import asyncio
-
     max_wait = 30
     wait_interval = 0.5
     waited = 0
@@ -196,8 +194,6 @@ async def test_human_in_loop_text_response_e2e():
     run_id = run["run_id"]
 
     # Wait for interrupt
-    import asyncio
-
     max_wait = 30
     wait_interval = 0.5
     waited = 0
@@ -338,8 +334,6 @@ async def test_human_in_loop_ignore_tool_call_e2e():
     run_id = run["run_id"]
 
     # Wait for interrupt
-    import asyncio
-
     max_wait = 30
     wait_interval = 0.5
     waited = 0
@@ -492,8 +486,6 @@ async def test_human_in_loop_edit_tool_args_e2e():
     elog("✅ Edit and execution completed", {"final_status": completed_run["status"]})
 
     # Wait for state to be consistent after run completion
-    import asyncio
-
     max_wait = 5
     wait_interval = 0.2
     waited = 0
@@ -609,8 +601,6 @@ async def test_human_in_loop_mark_as_resolved_e2e():
     run_id = run["run_id"]
 
     # Wait for interrupt
-    import asyncio
-
     max_wait = 30
     wait_interval = 0.5
     waited = 0

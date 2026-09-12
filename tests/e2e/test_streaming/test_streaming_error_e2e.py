@@ -164,7 +164,6 @@ async def test_streaming_error_received_in_sse():
         # If the stream itself fails, that's also an error case to handle
         elog("Stream exception", {"error": str(e), "type": type(e).__name__})
         # Don't fail the test - we're testing error handling
-        pass
 
 
 @pytest.mark.e2e

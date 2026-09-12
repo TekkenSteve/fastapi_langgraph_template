@@ -106,15 +106,6 @@ async def _consume_streaming_response(response: object) -> dict:
     return json.loads(body) if body else {}
 
 
-# Standard patches for _prepare_run dependencies
-_PREPARE_RUN_PATCHES = {
-    "agent_server.usecase.execution.run_preparation._validate_resume_command": AsyncMock,
-    "agent_server.usecase.execution.run_preparation.set_thread_status": AsyncMock,
-    "agent_server.usecase.execution.run_preparation.update_thread_metadata": AsyncMock,
-    "agent_server.usecase.execution.run_preparation.resolve_assistant_id": None,
-}
-
-
 class TestWaitForRunExceptionPaths:
     """Test exception handling and edge cases in wait_for_run endpoint."""
 
