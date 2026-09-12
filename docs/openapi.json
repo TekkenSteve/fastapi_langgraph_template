@@ -4578,6 +4578,23 @@
         ],
         "title": "McpServerStatus"
       },
+      "PredictRequest": {
+        "properties": {
+          "features": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Features",
+            "description": "Feature dict matching the model's training schema"
+          }
+        },
+        "type": "object",
+        "required": [
+          "features"
+        ],
+        "title": "PredictRequest"
+      },
       "Run": {
         "properties": {
           "run_id": {
