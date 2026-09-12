@@ -1,4 +1,4 @@
-.PHONY: help install setup-hooks format lint type-check security codeql codeql-setup codeql-clean test test-cov \
+.PHONY: help install setup-hooks format lint type-check security codeql codeql-setup codeql-clean openapi test test-cov \
 	deps dev up down logs run migrate-create migrate-up \
 	e2e-dev e2e-prod e2e-auth e2e-both ci-check clean
 
@@ -12,6 +12,7 @@ help:
 	@echo "  make security        - Run security checks with bandit"
 	@echo "  make codeql          - Run CodeQL locally with the CI query set (grouped report)"
 	@echo "  make codeql-setup    - Install the CodeQL CLI bundle (same release as GitHub Actions)"
+	@echo "  make openapi         - Regenerate docs/openapi.json from the app (same export as CI)"
 	@echo "  make test            - Run unit + integration tests"
 	@echo "  make test-cov        - Run tests with coverage"
 	@echo "  make deps            - Start PostgreSQL + Redis only (for local runs)"
@@ -63,6 +64,9 @@ codeql-setup:
 
 codeql-clean:
 	rm -rf .codeql
+
+openapi:
+	uv run python scripts/export_openapi.py
 
 test:
 	uv run pytest tests/unit tests/integration tests/graphs tests/shop tests/ml
