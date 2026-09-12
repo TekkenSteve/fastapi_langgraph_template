@@ -1,4 +1,4 @@
-.PHONY: help install setup-hooks format lint type-check security codeql codeql-setup codeql-clean openapi test test-cov \
+.PHONY: help install setup-hooks format lint type-check security codeql codeql-setup codeql-clean openapi openapi-check pre-commit test test-cov \
 	deps dev up down logs run migrate-create migrate-up \
 	e2e-dev e2e-prod e2e-auth e2e-both ci-check clean
 
@@ -13,6 +13,8 @@ help:
 	@echo "  make codeql          - Run CodeQL locally with the CI query set (grouped report)"
 	@echo "  make codeql-setup    - Install the CodeQL CLI bundle (same release as GitHub Actions)"
 	@echo "  make openapi         - Regenerate docs/openapi.json from the app (same export as CI)"
+	@echo "  make pre-commit      - One command before committing: fix format + all fast gates"
+	@echo "  make ci-check        - Pre-commit gates + CodeQL (slow) — run before pushing"
 	@echo "  make test            - Run unit + integration tests"
 	@echo "  make test-cov        - Run tests with coverage"
 	@echo "  make deps            - Start PostgreSQL + Redis only (for local runs)"
@@ -68,6 +70,23 @@ codeql-clean:
 openapi:
 	uv run python scripts/export_openapi.py
 
+# Regenerate the spec in place; fails if it changed, so drift never reaches CI.
+# On failure the fix is already in the working tree — just commit it.
+openapi-check:
+	uv run python scripts/export_openapi.py
+	@git diff --exit-code -- docs/openapi.json || \
+		{ echo "ERROR: docs/openapi.json drifted — regenerated in the working tree, commit it."; exit 1; }
+
+# Everything that should pass before you commit. Auto-fixes formatting first,
+# then every fast gate; bandit stays non-blocking (repo convention).
+# CodeQL is deliberately excluded — minutes, not seconds (`make codeql`).
+pre-commit: format
+	$(MAKE) lint type-check arch-check
+	-$(MAKE) security
+	$(MAKE) openapi-check test
+	@echo ""
+	@echo "Pre-commit gates passed — ready to commit."
+
 test:
 	uv run pytest tests/unit tests/integration tests/graphs tests/shop tests/ml
 
@@ -98,13 +117,10 @@ migrate-create:
 migrate-up:
 	cd src/agent_server && uv run alembic -c alembic.ini upgrade head
 
-ci-check: format lint
-	uv run ty check src/agent_server/ --exit-zero-on-warning
-	uv run python scripts/check_architecture.py
-	-uv run bandit -c pyproject.toml -r src/agent_server/
-	$(MAKE) test
+ci-check: pre-commit
+	$(MAKE) codeql
 	@echo ""
-	@echo "All CI checks completed! (bandit is non-blocking)"
+	@echo "All CI checks completed!"
 
 E2E_IGNORE := --ignore=tests/e2e/manual_auth_tests --ignore=tests/e2e/multi_instance
 

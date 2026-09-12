@@ -23,6 +23,7 @@ and all wiring is explicit Python in `src/agent_server/app/main.py`.
 | Lint / format / types | `make lint` / `make format` / `make type-check` | direct tool runs |
 | CodeQL (same engine + suites as CI) | `make codeql` → `.codeql/codeql-report.md` | pushing to GitHub and reading the Security tab |
 | Regenerate OpenAPI spec (after adding endpoints) | `make openapi` → commit the result | letting the CI bot open a drift PR |
+| One command before committing | `make pre-commit` (format + lint + types + arch + security + spec drift + tests) | running each gate by hand |
 | New migration | `make migrate-create MSG="..."` | `alembic revision` — env.py wires the DB URL from settings |
 | Apply migrations | `make migrate-up` | `alembic upgrade` |
 | E2E (dev / prod / auth) | `make e2e-dev` / `make e2e-prod` / `make e2e-auth` | running pytest against a hand-started server |
@@ -40,7 +41,8 @@ Notes:
   The extra warn-level rules from ty's "coming from mypy/pyright" guide are on;
   warnings stay visible but non-blocking (`--exit-zero-on-warning`).
   `bandit` is non-blocking. `ruff` IS blocking.
-- Never claim a change is done without `make format`, `make lint` and `make test` passing.
+- Never claim a change is done without `make pre-commit` passing (it runs format,
+  lint, type-check, arch-check, security, openapi drift check and the full test suite).
 
 ## Layering
 
