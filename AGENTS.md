@@ -21,6 +21,7 @@ and all wiring is explicit Python in `src/agent_server/app/main.py`.
 | Server locally with hot reload | `make run` (after `make deps`) | bare `uvicorn` |
 | Unit + integration tests | `make test` | `pytest tests/` — e2e tests need a running server |
 | Lint / format / types | `make lint` / `make format` / `make type-check` | direct tool runs |
+| CodeQL (same engine + suites as CI) | `make codeql` → `.codeql/codeql-report.md` | pushing to GitHub and reading the Security tab |
 | New migration | `make migrate-create MSG="..."` | `alembic revision` — env.py wires the DB URL from settings |
 | Apply migrations | `make migrate-up` | `alembic upgrade` |
 | E2E (dev / prod / auth) | `make e2e-dev` / `make e2e-prod` / `make e2e-auth` | running pytest against a hand-started server |

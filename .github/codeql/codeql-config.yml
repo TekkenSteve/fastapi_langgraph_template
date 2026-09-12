@@ -1,0 +1,23 @@
+# Single source of truth for the CodeQL query set.
+# Consumed by:
+#   - CI:  .github/workflows/codeql.yml  (github/codeql-action/init `config-file`)
+#   - local:  `make codeql`  → scripts/codeql_local.py (same suites, same engine)
+#
+# security-extended: the full security pack beyond the default suite.
+# `security-and-quality` is deliberately NOT enabled: its note-level quality
+# queries duplicate what ruff/ty already gate locally (and produce false
+# positives on Protocol `...` stubs and `cast("...", ...)` string annotations).
+# Run `uv run python scripts/codeql_local.py analyze` ad hoc if you ever want
+# the quality sweep (it accepts the suites from this file — add temporarily).
+name: "CodeQL config (CI + local)"
+
+queries:
+  - uses: security-extended
+
+# NOTE: keep this list in sync with what CI sees (a git checkout).
+# .venv / archive are gitignored, so CI never scans them — ignored here too,
+# otherwise a local run would produce findings CI will never show.
+paths-ignore:
+  - .venv
+  - archive
+  - "apps/web/node_modules"

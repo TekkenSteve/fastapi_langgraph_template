@@ -1,4 +1,4 @@
-.PHONY: help install setup-hooks format lint type-check security test test-cov \
+.PHONY: help install setup-hooks format lint type-check security codeql codeql-setup codeql-clean test test-cov \
 	deps dev up down logs run migrate-create migrate-up \
 	e2e-dev e2e-prod e2e-auth e2e-both ci-check clean
 
@@ -10,6 +10,8 @@ help:
 	@echo "  make lint            - Lint code with ruff"
 	@echo "  make type-check      - Run ty type checking"
 	@echo "  make security        - Run security checks with bandit"
+	@echo "  make codeql          - Run CodeQL locally with the CI query set (grouped report)"
+	@echo "  make codeql-setup    - Install the CodeQL CLI bundle (same release as GitHub Actions)"
 	@echo "  make test            - Run unit + integration tests"
 	@echo "  make test-cov        - Run tests with coverage"
 	@echo "  make deps            - Start PostgreSQL + Redis only (for local runs)"
@@ -49,6 +51,18 @@ arch-check:
 
 security:
 	uv run bandit -c pyproject.toml -r src/agent_server/
+
+# Same engine + same query suites as .github/workflows/codeql.yml (config lives
+# in .github/codeql/codeql-config.yml, shared by CI and this target).
+# Outputs: .codeql/results.sarif (raw SARIF) + .codeql/codeql-report.md (grouped).
+codeql:
+	uv run python scripts/codeql_local.py analyze
+
+codeql-setup:
+	uv run python scripts/codeql_local.py ensure-cli
+
+codeql-clean:
+	rm -rf .codeql
 
 test:
 	uv run pytest tests/unit tests/integration tests/graphs tests/shop tests/ml
