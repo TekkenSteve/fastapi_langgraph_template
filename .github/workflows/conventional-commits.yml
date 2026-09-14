@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - uses: amannn/action-semantic-pull-request@v5
+      - uses: amannn/action-semantic-pull-request@v6
         # Needed for PRs not authored by the repo owner (bot, external
         # contributors): the action must call the API to read the title.
         env:
