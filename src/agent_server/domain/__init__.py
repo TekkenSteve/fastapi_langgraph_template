@@ -16,7 +16,7 @@ from agent_server.domain.crons import (
     CronUpdate,
 )
 from agent_server.domain.errors import AgentProtocolError, get_error_type
-from agent_server.domain.runs import Run, RunCreate, RunStatus
+from agent_server.domain.runs import Run, RunCreate, RunsCancel, RunStatus
 from agent_server.domain.store import (
     StoreDeleteRequest,
     StoreGetResponse,
@@ -70,6 +70,7 @@ __all__ = [
     # Runs
     "Run",
     "RunCreate",
+    "RunsCancel",
     "RunStatus",
     # Crons
     "CronCreate",
