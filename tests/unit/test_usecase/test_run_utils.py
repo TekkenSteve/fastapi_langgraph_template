@@ -81,3 +81,26 @@ async def test_filter_with_empty_properties_returns_context():
     result = await run_utils._filter_context_by_schema(context, schema)
     # no properties defined -> do not filter
     assert result == context
+
+
+class TestMapCommandToLangGraph:
+    """A goto target without ``input`` must not KeyError on the Send mapping."""
+
+    def test_goto_send_without_input_maps_to_none_input(self):
+        from langgraph.types import Send
+
+        from agent_server.usecase.execution.run_utils import map_command_to_langgraph
+
+        command = map_command_to_langgraph({"resume": 1, "goto": [{"node": "tool"}, "plain"]})
+
+        assert command.resume == 1
+        assert command.goto == [Send("tool", None), "plain"]
+
+    def test_goto_send_with_input_keeps_input(self):
+        from langgraph.types import Send
+
+        from agent_server.usecase.execution.run_utils import map_command_to_langgraph
+
+        command = map_command_to_langgraph({"goto": {"node": "tool", "input": {"k": 1}}})
+
+        assert command.goto == [Send("tool", {"k": 1})]
