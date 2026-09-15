@@ -25,16 +25,15 @@ from agent_server.infra import generate_event_id
 from agent_server.infra.redis import redis_manager
 from agent_server.infra.serializers import GeneralSerializer
 from agent_server.usecase.execution.active_runs import active_runs, explicit_run_cancellations
-from agent_server.usecase.streaming.base_broker import BaseBrokerManager, BaseRunBroker
+from agent_server.usecase.streaming.base_broker import REPLAY_RETENTION_SECONDS, BaseBrokerManager, BaseRunBroker
 
 logger = structlog.getLogger(__name__)
 
 _serializer = GeneralSerializer()
 
-# TTL for the replay buffer — safety net for runs that crash without cleanup.
-# cleanup_run() deletes the broker on normal completion; this TTL only matters
-# if cleanup never fires (e.g. process crash, OOM kill).
-_REPLAY_TTL_SECONDS = 600  # 10 minutes
+# Every write refreshes the TTL, so the buffer expires this long after the last
+# event, matching the in-memory post-completion window.
+_REPLAY_TTL_SECONDS = REPLAY_RETENTION_SECONDS
 # Max events in the replay buffer (prevents unbounded growth)
 _REPLAY_MAX_EVENTS = 10_000
 

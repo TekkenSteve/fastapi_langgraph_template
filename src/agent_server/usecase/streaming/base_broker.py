@@ -6,6 +6,10 @@ from typing import Any
 
 from agent_server.domain.enums import RunCancellationAction
 
+# How long a finished run's events stay replayable, both backends. Reconnects
+# happen in seconds; this is the documented window in README.md.
+REPLAY_RETENTION_SECONDS = 600
+
 
 class BaseRunBroker(ABC):
     """Abstract base class for a run-specific event broker.

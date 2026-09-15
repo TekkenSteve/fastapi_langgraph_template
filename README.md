@@ -156,6 +156,10 @@ framework's.
 | Crash recovery | — | lease + heartbeat + reaper |
 | Horizontal scaling | single instance | multi-instance (see `deployments/test/`) |
 
+SSE reconnects resume from the `Last-Event-ID` header: both brokers keep a replay
+buffer and retain a finished run's events for 10 minutes after it completes, in dev
+and production alike (`REPLAY_RETENTION_SECONDS` in `usecase/streaming/base_broker.py`).
+
 ## CI
 
 `.github/workflows/ci.yml` runs on every PR and push to `main`: ruff (lint + format),
