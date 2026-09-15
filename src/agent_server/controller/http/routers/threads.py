@@ -36,6 +36,7 @@ from agent_server.domain import (
 )
 from agent_server.domain.errors import CONFLICT, NOT_FOUND, AgentProtocolError
 from agent_server.domain.run_config import strip_pinned_config_keys
+from agent_server.domain.search_limit import effective_search_limit
 from agent_server.repo.database import db_manager
 from agent_server.repo.orm import Run as RunORM
 from agent_server.repo.orm import Thread as ThreadORM
@@ -987,7 +988,7 @@ async def search_threads(
         stmt = stmt.where(ThreadORM.metadata_json.op("@>")(request.metadata))
 
     offset = request.offset or 0
-    limit = request.limit or 20
+    limit = request.limit if request.limit is not None else effective_search_limit()
     column, asc = _resolve_sort(request)
     direction = column.asc() if asc else column.desc()
     # Secondary sort on thread_id keeps offset pagination stable when the

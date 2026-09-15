@@ -11,6 +11,7 @@ from langgraph.types import StateSnapshot
 from psycopg import Error as PsycopgError
 from sqlalchemy.dialects import postgresql
 
+from agent_server.config.settings import settings
 from agent_server.controller.http.routers import threads as threads_module
 from agent_server.repo.orm import get_session as core_get_session
 from tests.fixtures.clients import create_test_app, make_client
@@ -631,6 +632,85 @@ class TestSearchThreads:
             json={"sort_by": "created_at", "sort_order": "sideways"},
         )
         assert resp.status_code == 422
+
+    def test_search_accepts_limit_500(self, client: TestClient) -> None:
+        """LangGraph SDK clients page with limit=500; must not 422."""
+        resp = client.post("/threads/search", json={"limit": 500})
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
+
+    def test_search_accepts_limit_at_cap(self, client: TestClient) -> None:
+        resp = client.post("/threads/search", json={"limit": settings.app.MAX_SEARCH_LIMIT})
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
+
+    def test_search_accepts_null_limit(self, client: TestClient) -> None:
+        resp = client.post("/threads/search", json={"limit": None})
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
+
+    def test_search_omitted_limit_honors_cap_below_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings.app, "MAX_SEARCH_LIMIT", 10)
+        captured: list[int | None] = []
+        app = create_test_app(include_runs=False, include_threads=True)
+        threads = [_thread_row("thread-1")]
+
+        from tests.fixtures.session_fixtures import ThreadSession
+
+        class Session(ThreadSession):
+            async def scalars(self, stmt: Any = None) -> Any:
+                if stmt is not None and hasattr(stmt, "_limit"):
+                    captured.append(stmt._limit)
+                return await super().scalars(stmt)
+
+        override_session_dependency(app, Session, threads=threads)
+        resp = make_client(app).post("/threads/search", json={})
+        assert resp.status_code == 200
+        assert captured == [10]
+
+    def test_search_null_limit_honors_cap_below_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings.app, "MAX_SEARCH_LIMIT", 10)
+        captured: list[int | None] = []
+        app = create_test_app(include_runs=False, include_threads=True)
+        threads = [_thread_row("thread-1")]
+
+        from tests.fixtures.session_fixtures import ThreadSession
+
+        class Session(ThreadSession):
+            async def scalars(self, stmt: Any = None) -> Any:
+                if stmt is not None and hasattr(stmt, "_limit"):
+                    captured.append(stmt._limit)
+                return await super().scalars(stmt)
+
+        override_session_dependency(app, Session, threads=threads)
+        resp = make_client(app).post("/threads/search", json={"limit": None})
+        assert resp.status_code == 200
+        assert captured == [10]
+
+    def test_search_returns_422_when_limit_exceeds_cap(self, client: TestClient) -> None:
+        """limit above MAX_SEARCH_LIMIT is rejected at the request model."""
+        cap = settings.app.MAX_SEARCH_LIMIT
+        resp = client.post("/threads/search", json={"limit": cap + 1})
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert any(
+            error.get("loc") == ["body", "limit"]
+            and error.get("type") == "less_than_equal"
+            and error.get("ctx", {}).get("le") == cap
+            for error in detail
+        )
+
+    @pytest.mark.parametrize("limit", [0, -1])
+    def test_search_returns_422_when_limit_is_zero_or_negative(self, client: TestClient, limit: int) -> None:
+        resp = client.post("/threads/search", json={"limit": limit})
+        assert resp.status_code == 422
+        assert "limit" in resp.text
+
+    @pytest.mark.parametrize("limit", ["abc", [], {}, 20.5])
+    def test_search_returns_422_when_limit_is_not_an_integer(self, client: TestClient, limit: object) -> None:
+        resp = client.post("/threads/search", json={"limit": limit})
+        assert resp.status_code == 422
+        assert "limit" in resp.text
 
     def test_search_accepts_bool_metadata_filter(self, client):
         """metadata={'active': True} is accepted end-to-end (real matching verified in E2E)."""

@@ -5189,7 +5189,7 @@
             "anyOf": [
               {
                 "type": "integer",
-                "maximum": 100.0,
+                "maximum": 1000.0,
                 "minimum": 1.0
               },
               {
@@ -5626,7 +5626,7 @@
             "anyOf": [
               {
                 "type": "integer",
-                "maximum": 100.0,
+                "maximum": 1000.0,
                 "minimum": 1.0
               },
               {

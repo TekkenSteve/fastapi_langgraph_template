@@ -662,3 +662,29 @@ class TestThreadTTLSettings:
         ttl = ThreadTTLSettings(_env_file=None)
 
         assert ttl.THREAD_TTL == '{"default_ttl": 60}'
+
+
+class TestMaxSearchLimit:
+    """MAX_SEARCH_LIMIT defaults to the LangGraph Platform threads.search max."""
+
+    def test_default_matches_langgraph_threads_search_max(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("MAX_SEARCH_LIMIT", raising=False)
+        app = AppSettings(_env_file=None)
+
+        assert app.MAX_SEARCH_LIMIT == 1000
+
+    def test_reads_from_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MAX_SEARCH_LIMIT", "500")
+        app = AppSettings(_env_file=None)
+
+        assert app.MAX_SEARCH_LIMIT == 500
+
+    def test_rejects_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MAX_SEARCH_LIMIT", "0")
+        with pytest.raises(ValidationError):
+            AppSettings(_env_file=None)
+
+    def test_rejects_negative(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MAX_SEARCH_LIMIT", "-1")
+        with pytest.raises(ValidationError):
+            AppSettings(_env_file=None)
