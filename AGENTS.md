@@ -135,6 +135,33 @@ Work outward, mirroring how `threads` does it: `domain/<name>.py` → ORM table 
   JWT-mock suite. `e2e/multi_instance/` is manual-only.
 - Mock at the driver layer, not SQLAlchemy, when bypassing SQLAlchemy.
 
+## API compatibility (STRICT)
+
+This server speaks the Agent Protocol so the LangGraph SDK, Agent Chat UI and LangGraph
+Studio work against it unchanged. A request field that is accepted and quietly ignored is
+the compatibility bug that hurts most: the client sees success and the behaviour it asked
+for never happens.
+
+- **Every field the SDK can send either changes behaviour or returns 422.** Never accept a
+  field and ignore it. Not implemented yet? Declare the field and reject any value that
+  differs from current behaviour with a clear error.
+- **One exception: fields that configure a system outside this server.** A field whose only
+  effect is on a LangSmith-side service (e.g. `langsmith_tracer`) may be inert, but it must
+  be declared and listed in `DOCUMENTED_NOOP_KEYS` in
+  `tests/unit/test_usecase/test_event_streaming/test_spec_params.py`. Nothing else may be
+  inert.
+- **Declare accepted keys.** Agent Protocol v2 handlers keep an explicit key set
+  (`RUN_START_KEYS`, `INPUT_RESPOND_KEYS` in `usecase/streaming/v2/commands.py`) and log
+  unknown keys at warning level. Do not use `extra="forbid"` on request models: the Python
+  SDK always sends default-valued booleans, so a new SDK field would break every client.
+- **Pin the contract with a drift test.** `test_spec_params.py` vendors the protocol param
+  shapes and asserts the handler key sets cover them; `_SPEC_TUPLES` in
+  `tests/unit/test_auth/test_registry.py` does the same for route authorization. A new SDK
+  field must fail CI, not reach a user.
+- **Match public names and defaults.** Config keys, env vars and enum values follow the
+  public LangGraph Platform docs where one exists, so users can move between deployments
+  without changing payloads.
+
 ## Conventions inherited from upstream (keep them)
 
 - **Type annotations on everything** — every parameter and return type, `X | None` syntax.
