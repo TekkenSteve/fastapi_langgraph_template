@@ -458,6 +458,39 @@ class TestSearchAssistants:
         data = resp.json()
         assert len(data) == 2
 
+    def test_search_assistants_accepts_the_platform_page_size(self, client, mock_assistant_service):
+        """limit=100 is the platform's assistants/search ceiling and must stay accepted."""
+        mock_assistant_service.search_assistants.return_value = []
+
+        resp = client.post("/assistants/search", json={"limit": 100})
+
+        assert resp.status_code == 200
+
+    def test_search_assistants_accepts_the_sdk_default_page_size(self, client, mock_assistant_service):
+        """langgraph_sdk sends limit=10 on every assistants.search call."""
+        mock_assistant_service.search_assistants.return_value = []
+
+        resp = client.post("/assistants/search", json={"limit": 10, "offset": 0})
+
+        assert resp.status_code == 200
+
+    @pytest.mark.parametrize("limit", [101, 500, 1000])
+    def test_search_assistants_returns_422_above_the_platform_cap(
+        self, client, mock_assistant_service, limit: int
+    ) -> None:
+        """Unlike threads/store search, assistants search caps at 100; the SDK's 500 page is refused."""
+        resp = client.post("/assistants/search", json={"limit": limit})
+
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert any(
+            error.get("loc") == ["body", "limit"]
+            and error.get("type") == "less_than_equal"
+            and error.get("ctx", {}).get("le") == 100
+            for error in detail
+        ), detail
+        mock_assistant_service.search_assistants.assert_not_called()
+
     def test_search_assistants_combined_filters(self, client, mock_assistant_service):
         """Test searching with multiple filter criteria"""
         assistants = [

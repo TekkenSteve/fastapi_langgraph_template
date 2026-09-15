@@ -75,6 +75,8 @@ class AssistantSearchRequest(BaseModel):
     name: str | None = Field(None, description="Filter by assistant name")
     description: str | None = Field(None, description="Filter by assistant description")
     graph_id: str | None = Field(None, description="Filter by graph ID")
+    # Deliberately not MAX_SEARCH_LIMIT: the platform's assistants/search caps at
+    # 100 (SDK clients page it by 100), unlike threads/store search, which allow 1000.
     limit: int | None = Field(20, le=100, ge=1, description="Maximum results")
     offset: int | None = Field(0, ge=0, description="Results offset")
     metadata: dict[str, Any] | None = Field(
