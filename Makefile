@@ -133,9 +133,15 @@ e2e-dev:
 		if curl -s http://localhost:2026/health > /dev/null 2>&1; then ready=1; break; fi; \
 		sleep 2; \
 	done; \
-	if [ "$$ready" = "0" ]; then echo "Server failed to start within 60s"; docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.e2e.yml down; exit 1; fi
+	if [ "$$ready" = "0" ]; then \
+		echo "Server failed to start within 60s"; \
+		docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.e2e.yml logs --tail=80; \
+		docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.e2e.yml down; \
+		exit 1; \
+	fi
 	@rc=0; \
 	uv run pytest tests/e2e/ -m "not prod_only" $(E2E_IGNORE) -v --tb=short || rc=$$?; \
+	if [ "$$rc" != "0" ]; then docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.e2e.yml logs --tail=200; fi; \
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.e2e.yml down; \
 	exit $$rc
 
@@ -148,9 +154,15 @@ e2e-prod:
 		if curl -s http://localhost:2026/health > /dev/null 2>&1; then ready=1; break; fi; \
 		sleep 2; \
 	done; \
-	if [ "$$ready" = "0" ]; then echo "Server failed to start within 60s"; docker compose -f docker-compose.yml -f docker-compose.e2e.yml down; exit 1; fi
+	if [ "$$ready" = "0" ]; then \
+		echo "Server failed to start within 60s"; \
+		docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --tail=80; \
+		docker compose -f docker-compose.yml -f docker-compose.e2e.yml down; \
+		exit 1; \
+	fi
 	@rc=0; \
 	uv run pytest tests/e2e/ $(E2E_IGNORE) -v --tb=short || rc=$$?; \
+	if [ "$$rc" != "0" ]; then docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --tail=200; fi; \
 	docker compose -f docker-compose.yml -f docker-compose.e2e.yml down; \
 	exit $$rc
 
@@ -171,6 +183,7 @@ e2e-auth:
 	fi
 	@rc=0; \
 	uv run pytest tests/e2e/manual_auth_tests/ -v --tb=short -m auth_only -o addopts="--strict-markers -ra --color=yes" || rc=$$?; \
+	if [ "$$rc" != "0" ]; then docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.e2e.yml -f docker-compose.auth.yml logs --tail=200; fi; \
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.e2e.yml -f docker-compose.auth.yml down; \
 	exit $$rc
 

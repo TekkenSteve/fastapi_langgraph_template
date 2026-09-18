@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege for every job in this workflow.
+permissions:
+  contents: read
+
 env:
   POSTGRES_USER: postgres
   POSTGRES_PASSWORD: postgres
@@ -14,6 +18,7 @@ jobs:
   lint:
     name: ruff (lint + format)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -28,6 +33,7 @@ jobs:
   type-check:
     name: ty
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -39,6 +45,7 @@ jobs:
   security:
     name: bandit
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -51,6 +58,7 @@ jobs:
   test:
     name: unit + integration
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: pgvector/pgvector:pg18
@@ -88,6 +96,7 @@ jobs:
   docker-build:
     name: docker build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Build image
