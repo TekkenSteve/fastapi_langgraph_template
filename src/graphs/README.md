@@ -25,7 +25,7 @@ shopping_agent/
 ├── __init__.py        # re-export the public contract only
 ├── graph.py           # ★ thin entry: build + compile. langgraph.json points here. Never grows.
 ├── builder.py         # pure wiring: add_node/add_edge, zero business logic
-├── nodes/             # one node per file, run_* naming; grows horizontally
+├── nodes.py           # node functions; split into nodes/ past ~3 nodes (rule 4)
 ├── edges.py           # pure routing functions (state → node name); no LLM, no IO
 ├── state.py           # State + Context — the single source of the data contract
 ├── prompts.py         # prompt constants (plural, always)

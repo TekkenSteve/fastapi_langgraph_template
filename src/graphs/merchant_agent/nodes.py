@@ -1,4 +1,4 @@
-"""The shopping node: model call with shop tools bound (ReAct loop)."""
+"""Node functions for the merchant agent."""
 
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
@@ -7,32 +7,32 @@ from typing import Any, cast
 from langchain_core.messages import AIMessage, SystemMessage
 from langgraph.runtime import Runtime
 
+from merchant_agent.prompts import MERCHANT_SYSTEM_PROMPT
+from merchant_agent.state import Context, State
 from shared.models import load_chat_model_with_fallbacks
-from shopping_agent.prompts import SHOP_SYSTEM_PROMPT
-from shopping_agent.state import Context, State
+
+__all__ = ["make_merchant_node"]
 
 
-def make_shop_node(tools: list) -> Callable[[State, Runtime[Context]], Coroutine[Any, Any, dict[str, Any]]]:
-    async def shop(state: State, runtime: Runtime[Context]) -> dict[str, Any]:
+def make_merchant_node(tools: list) -> Callable[[State, Runtime[Context]], Coroutine[Any, Any, dict[str, Any]]]:
+    """The merchant node: model call with merchant tools bound (ReAct loop)."""
+
+    async def merchant(state: State, runtime: Runtime[Context]) -> dict[str, Any]:
         model = load_chat_model_with_fallbacks(runtime.context.model, runtime.context.fallback_models).bind_tools(tools)
-        system = SHOP_SYSTEM_PROMPT.format(
-            system_time=datetime.now(tz=UTC).isoformat(),
-            preferences=state.preferences or "none known",
-        )
+        system = MERCHANT_SYSTEM_PROMPT.format(system_time=datetime.now(tz=UTC).isoformat())
         response = cast("AIMessage", await model.ainvoke([SystemMessage(system), *state.messages]))
 
-        # Last allowed step but the model still wants tools: answer gracefully
-        # instead of dying on the recursion limit.
+        # Last allowed step but the model still wants tools: answer gracefully.
         if state.is_last_step and response.tool_calls:
             return {
                 "messages": [
                     AIMessage(
                         id=response.id,
                         content="I couldn't complete this within the allowed number of steps. "
-                        "Here's what I found so far — how would you like to proceed?",
+                        "Nothing was applied — pending staged changes are unaffected.",
                     )
                 ]
             }
         return {"messages": [response]}
 
-    return shop
+    return merchant

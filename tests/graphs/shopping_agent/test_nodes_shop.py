@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from shopping_agent.nodes.shop import make_shop_node
+from shopping_agent.nodes import make_shop_node
 from shopping_agent.state import Context, State
 
 
@@ -29,7 +29,7 @@ def _runtime() -> Any:
 async def test_shop_returns_model_response(monkeypatch: pytest.MonkeyPatch) -> None:
     response = AIMessage(content="Here are some coffee makers.")
     monkeypatch.setattr(
-        "shopping_agent.nodes.shop.load_chat_model_with_fallbacks", lambda name, _fallbacks=None: _FakeModel(response)
+        "shopping_agent.nodes.load_chat_model_with_fallbacks", lambda name, _fallbacks=None: _FakeModel(response)
     )
     node = make_shop_node([])
     result = await node(State(messages=[HumanMessage(content="coffee?")]), _runtime())
@@ -43,7 +43,7 @@ async def test_shop_graceful_exit_on_last_step(monkeypatch: pytest.MonkeyPatch) 
         tool_calls=[{"name": "search_products", "args": {"query": "x"}, "id": "1"}],
     )
     monkeypatch.setattr(
-        "shopping_agent.nodes.shop.load_chat_model_with_fallbacks", lambda name, _fallbacks=None: _FakeModel(response)
+        "shopping_agent.nodes.load_chat_model_with_fallbacks", lambda name, _fallbacks=None: _FakeModel(response)
     )
     node = make_shop_node([])
     state = State(messages=[HumanMessage(content="coffee?")], is_last_step=True)

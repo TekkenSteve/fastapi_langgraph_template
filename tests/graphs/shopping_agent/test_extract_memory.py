@@ -8,7 +8,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.store.memory import InMemoryStore
 
-from shopping_agent.nodes.extract_memory import _last_exchange_text, extract_memory
+from shopping_agent.nodes import _last_exchange_text, extract_memory
 from shopping_agent.state import Context, State
 
 
@@ -41,7 +41,7 @@ def test_last_exchange_text_picks_user_and_answer_only() -> None:
 
 async def test_extracts_and_saves_preferences(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        sys.modules["shopping_agent.nodes.extract_memory"],
+        sys.modules["shopping_agent.nodes"],
         "load_chat_model_with_fallbacks",
         lambda name, _fallbacks=None: _FakeModel('[{"key": "roast", "value": "light"}]'),
     )
@@ -62,7 +62,7 @@ async def test_skips_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def test_prose_answer_saves_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        sys.modules["shopping_agent.nodes.extract_memory"],
+        sys.modules["shopping_agent.nodes"],
         "load_chat_model_with_fallbacks",
         lambda name, _fallbacks=None: _FakeModel("nothing to save"),
     )
@@ -73,7 +73,7 @@ async def test_prose_answer_saves_nothing(monkeypatch: pytest.MonkeyPatch) -> No
 
 async def test_filtered_facts_are_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        sys.modules["shopping_agent.nodes.extract_memory"],
+        sys.modules["shopping_agent.nodes"],
         "load_chat_model_with_fallbacks",
         lambda name, _fallbacks=None: _FakeModel('[{"key": "card", "value": "4111 1111 1111 1111"}]'),
     )
