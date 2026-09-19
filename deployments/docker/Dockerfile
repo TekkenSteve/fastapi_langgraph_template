@@ -42,6 +42,10 @@ RUN uv pip install --system --compile-bytecode --no-deps .
 # -----------------------------
 FROM base AS final
 
+# ARGs are stage-scoped: final must re-declare PY_VERSION or the COPY below
+# expands to /usr/local/lib/python/site-packages (empty) and the build fails.
+ARG PY_VERSION
+
 # The slim base already ships ca-certificates (needed for LLM API TLS).
 
 # Copy installed Python packages from the builder stage.
@@ -52,13 +56,20 @@ COPY --from=builder /usr/local/bin/ /usr/local/bin/
 COPY langgraph.json ./langgraph.json
 COPY src/graphs/ ./src/graphs/
 COPY src/shop/ ./src/shop/
+COPY src/hub/ ./src/hub/
 COPY src/ml/ ./src/ml/
 COPY src/http_app.py ./src/http_app.py
+COPY deployments/docker/entrypoint.sh ./entrypoint.sh
+# Shell scripts must be READABLE by the runtime user (bash reads them).
+RUN chmod 755 ./entrypoint.sh
 
 EXPOSE 2026
 
 # Run as non-root
 USER app
+
+# entrypoint.sh handles optional custom-CA injection, then execs the CMD.
+ENTRYPOINT ["./entrypoint.sh"]
 
 # Default command - can be overridden by docker-compose
 CMD ["uvicorn", "agent_server.app.main:app", "--host", "0.0.0.0", "--port", "2026"]

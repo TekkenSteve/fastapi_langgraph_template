@@ -28,7 +28,12 @@ from agent_server.config.graph_config import (
     load_http_config,
 )
 from agent_server.config.settings import settings
-from agent_server.controller.http.middleware import ContentTypeFixMiddleware, StructLogMiddleware
+from agent_server.controller.http.middleware import (
+    ContentTypeFixMiddleware,
+    RequestSizeLimitMiddleware,
+    SecurityHeadersMiddleware,
+    StructLogMiddleware,
+)
 from agent_server.controller.http.routers.assistants import router as assistants_router
 from agent_server.controller.http.routers.crons import router as crons_router
 from agent_server.controller.http.routers.event_streaming import router as event_streaming_router
@@ -91,6 +96,22 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """FastAPI lifespan context manager for startup/shutdown"""
     # Multi-pod K8s: set RUN_MIGRATIONS_ON_STARTUP=false + run `make migrate-up`
     # out-of-band.
+    # Per-invocation MCP tool authorization: app layer injects the interceptor
+    # factory (repo/graphs must not import auth).
+    from agent_server.auth.policy import get_policy_engine
+    from agent_server.auth.tool_authz import PolicyToolInterceptor
+    from agent_server.repo.graphs.mcp_loader import configure_tool_interceptor_factory
+
+    configure_tool_interceptor_factory(lambda user_id: PolicyToolInterceptor(get_policy_engine(), user_id))
+
+    # Policy engine: OPA sidecar replaces the local engine when configured.
+    if settings.policy.OPA_URL:
+        from agent_server.auth.opa_policy import OpaPolicyEngine
+        from agent_server.auth.policy import configure_policy_engine
+
+        configure_policy_engine(OpaPolicyEngine(settings.policy.OPA_URL, package=settings.policy.OPA_POLICY_PACKAGE))
+        logger.info("policy_engine_configured", backend="opa", url=settings.policy.OPA_URL)
+
     if settings.app.RUN_MIGRATIONS_ON_STARTUP:
         try:
             await run_migrations_async()
@@ -302,7 +323,10 @@ def _add_common_middleware(app: FastAPI, cors_config: CorsConfig | None) -> None
     app.add_middleware(StructLogMiddleware)
     app.add_middleware(CorrelationIdMiddleware)
     _add_cors_middleware(app, cors_config)
+    app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(ContentTypeFixMiddleware)
+    # Outermost: reject oversized bodies before anything parses them.
+    app.add_middleware(RequestSizeLimitMiddleware)
 
 
 def _include_core_routers(app: FastAPI) -> None:
