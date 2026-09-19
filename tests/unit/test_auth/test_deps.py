@@ -115,7 +115,7 @@ class TestRequireAuth:
 class TestGetCurrentUser:
     """Test get_current_user legacy function"""
 
-    def test_get_current_user_from_scope(self):
+    async def test_get_current_user_from_scope(self):
         """Test get_current_user reads from request.scope"""
         user_data = {
             "identity": "user-123",
@@ -126,40 +126,44 @@ class TestGetCurrentUser:
         mock_request = Mock(spec=Request)
         mock_request.scope = {"user": langgraph_user}
 
-        user = get_current_user(mock_request)
+        user = await get_current_user(mock_request)
 
         assert isinstance(user, User)
         assert user.identity == "user-123"
 
-    def test_get_current_user_from_request_user(self):
-        """Test get_current_user falls back to request.user"""
-        user_data = {
-            "identity": "user-123",
-            "display_name": "Test User",
-        }
-        langgraph_user = LangGraphUser(user_data)
+    async def test_get_current_user_falls_back_to_require_auth(self):
+        """On a scope miss, get_current_user authenticates via require_auth.
 
+        (It must not touch request.user — Starlette's property asserts when no
+        AuthenticationMiddleware is installed, which this server does not use.)
+        """
+        expected = User(identity="user-123", display_name="Test User")
         mock_request = Mock(spec=Request)
         mock_request.scope = {}
-        mock_request.user = langgraph_user
 
-        user = get_current_user(mock_request)
+        with patch("agent_server.auth.deps.require_auth", new=AsyncMock(return_value=expected)) as mocked:
+            user = await get_current_user(mock_request)
 
-        assert isinstance(user, User)
-        assert user.identity == "user-123"
+        assert user is expected
+        mocked.assert_awaited_once_with(mock_request)
 
-    def test_get_current_user_not_authenticated(self):
-        """Test get_current_user raises when user not found"""
+    async def test_get_current_user_not_authenticated(self):
+        """Test get_current_user propagates require_auth's 401 when scope is empty"""
         mock_request = Mock(spec=Request)
         mock_request.scope = {}
-        mock_request.user = None
 
-        with pytest.raises(HTTPException) as exc_info:
-            get_current_user(mock_request)
+        with (
+            patch(
+                "agent_server.auth.deps.require_auth",
+                new=AsyncMock(side_effect=HTTPException(status_code=401, detail="Authentication required")),
+            ),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await get_current_user(mock_request)
 
         assert exc_info.value.status_code == 401
 
-    def test_get_current_user_invalid_auth(self):
+    async def test_get_current_user_invalid_auth(self):
         """Test get_current_user raises when is_authenticated is False"""
         user_data = {
             "identity": "user-123",
@@ -171,7 +175,7 @@ class TestGetCurrentUser:
         mock_request.scope = {"user": langgraph_user}
 
         with pytest.raises(HTTPException) as exc_info:
-            get_current_user(mock_request)
+            await get_current_user(mock_request)
 
         assert exc_info.value.status_code == 401
 

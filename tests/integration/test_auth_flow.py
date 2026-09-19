@@ -298,7 +298,7 @@ class TestUserModelCustomFields:
 
             from agent_server.auth.deps import get_current_user
 
-            user = get_current_user(mock_request)
+            user = await get_current_user(mock_request)
 
             # Verify custom fields are accessible
             assert isinstance(user, User)

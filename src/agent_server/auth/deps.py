@@ -103,13 +103,19 @@ AuthenticatedUser = Annotated[User, Depends(require_auth)]
 auth_dependency = [Depends(require_auth)]
 
 
-def get_current_user(request: Request) -> User:
+async def get_current_user(request: Request) -> User:
     """
     Legacy: Extract current user from request context set by middleware or dependency.
 
     This function reads from request.scope["user"] which is set by either:
     - The new require_auth() dependency (preferred)
     - The old AuthenticationMiddleware (for backward compatibility)
+
+    FastAPI does not guarantee a router-level ``require_auth`` runs before an
+    endpoint-level ``get_current_user``, so on a scope miss we authenticate
+    here instead of touching ``request.user`` — Starlette's property asserts
+    when no AuthenticationMiddleware is installed (which this server does not
+    use). Authentication is idempotent per process (backend is cached).
 
     This function passes ALL fields from auth handlers through to the User model,
     allowing custom auth handlers to return extra fields (e.g., subscription_tier,
@@ -124,13 +130,10 @@ def get_current_user(request: Request) -> User:
     Raises:
         HTTPException: If user is not authenticated
     """
-    # Try reading from request.scope first (set by require_auth dependency)
+    # Try reading from request.scope first (set by a require_auth that ran first)
     user = request.scope.get("user")
     if user is None:
-        # Fallback to request.user (set by middleware)
-        if not hasattr(request, "user") or request.user is None:
-            raise HTTPException(status_code=401, detail="Authentication required")
-        user = request.user
+        return await require_auth(request)
 
     if hasattr(user, "is_authenticated") and not user.is_authenticated:
         raise HTTPException(status_code=401, detail="Invalid authentication")
@@ -176,11 +179,11 @@ def require_permission(permission: str):
     return permission_dependency
 
 
-def require_authenticated(request: Request) -> User:
+async def require_authenticated(request: Request) -> User:
     """
     Simplified dependency that just ensures user is authenticated.
 
     This is equivalent to get_current_user but with a clearer name
     for endpoints that just need any authenticated user.
     """
-    return get_current_user(request)
+    return await get_current_user(request)
