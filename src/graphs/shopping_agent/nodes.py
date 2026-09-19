@@ -44,7 +44,8 @@ async def classify(state: State, runtime: Runtime[Context]) -> dict[str, Any]:
     classifier = load_chat_model_with_fallbacks(
         runtime.context.model, runtime.context.fallback_models
     ).with_structured_output(IntentResult)
-    result = await classifier.ainvoke([SystemMessage(CLASSIFY_PROMPT), *state.messages])
+    # with_structured_output's stub return is dict|BaseModel; the contract is IntentResult.
+    result = cast("IntentResult", await classifier.ainvoke([SystemMessage(CLASSIFY_PROMPT), *state.messages]))
     return {"intent": result.intent}
 
 
@@ -57,7 +58,7 @@ def make_shop_node(tools: list) -> Callable[[State, Runtime[Context]], Coroutine
             system_time=datetime.now(tz=UTC).isoformat(),
             preferences=state.preferences or "none known",
         )
-        response = cast("AIMessage", await model.ainvoke([SystemMessage(system), *state.messages]))
+        response = await model.ainvoke([SystemMessage(system), *state.messages])
 
         # Last allowed step but the model still wants tools: answer gracefully
         # instead of dying on the recursion limit.

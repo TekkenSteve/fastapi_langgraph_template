@@ -5,8 +5,10 @@ Requires a real LLM key (e.g. OPENAI_API_KEY) in .env or the environment.
 """
 
 import asyncio
+from typing import Any, cast
 
 from langchain_core.messages import HumanMessage
+from langchain_core.runnables import RunnableConfig
 
 from shop.backends import get_backend
 from shopping_agent.state import Context
@@ -15,10 +17,10 @@ from shopping_agent.subgraphs.order_agent.builder import build_order_agent
 
 async def main() -> None:
     graph = build_order_agent(get_backend()).compile()
-    config = {"configurable": {"user_id": "demo-user"}}
+    config: RunnableConfig = {"configurable": {"user_id": "demo-user"}}
 
     result = await graph.ainvoke(
-        {"messages": [HumanMessage(content="Where is my order?")]},
+        cast("Any", {"messages": [HumanMessage(content="Where is my order?")]}),
         config=config,
         context=Context(),
     )

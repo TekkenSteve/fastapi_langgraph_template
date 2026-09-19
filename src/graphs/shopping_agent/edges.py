@@ -10,7 +10,12 @@ from langchain_core.messages import AIMessage
 
 from shopping_agent.state import State
 
-_INTENT_TO_NODE = {"shop": "shop", "policy": "policy", "order": "order_agent", "chat": "chat"}
+_INTENT_TO_NODE: dict[str, Literal["shop", "policy", "order_agent", "chat"]] = {
+    "shop": "shop",
+    "policy": "policy",
+    "order": "order_agent",
+    "chat": "chat",
+}
 
 
 def route_after_classify(state: State) -> Literal["shop", "policy", "order_agent", "chat"]:

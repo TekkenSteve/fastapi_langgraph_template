@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
 from langchain_core.messages import AIMessage, SystemMessage
 from langgraph.runtime import Runtime
@@ -20,7 +20,7 @@ def make_merchant_node(tools: list) -> Callable[[State, Runtime[Context]], Corou
     async def merchant(state: State, runtime: Runtime[Context]) -> dict[str, Any]:
         model = load_chat_model_with_fallbacks(runtime.context.model, runtime.context.fallback_models).bind_tools(tools)
         system = MERCHANT_SYSTEM_PROMPT.format(system_time=datetime.now(tz=UTC).isoformat())
-        response = cast("AIMessage", await model.ainvoke([SystemMessage(system), *state.messages]))
+        response = await model.ainvoke([SystemMessage(system), *state.messages])
 
         # Last allowed step but the model still wants tools: answer gracefully.
         if state.is_last_step and response.tool_calls:

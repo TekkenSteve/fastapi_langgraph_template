@@ -8,6 +8,8 @@ Topology:
                                    └─→ chat ───────────↗
 """
 
+from typing import Any, cast
+
 from langgraph.graph import START, StateGraph
 from langgraph.prebuilt import ToolNode
 
@@ -19,17 +21,17 @@ from shopping_agent.subgraphs.order_agent import build_order_agent
 from shopping_agent.tools import make_shop_tools
 
 
-def build_shopping_agent(backend: ShopBackend) -> StateGraph:
+def build_shopping_agent(backend: ShopBackend) -> StateGraph[State, Context, InputState, State]:
     tools = make_shop_tools(backend)
 
     builder = StateGraph(State, input_schema=InputState, context_schema=Context)
-    builder.add_node("initialize", initialize)
-    builder.add_node("classify", classify)
-    builder.add_node("shop", make_shop_node(tools))
+    builder.add_node("initialize", cast("Any", initialize))
+    builder.add_node("classify", cast("Any", classify))
+    builder.add_node("shop", cast("Any", make_shop_node(tools)))
     builder.add_node("tools", ToolNode(tools))
-    builder.add_node("policy", make_policy_node(backend))
-    builder.add_node("chat", chat)
-    builder.add_node("extract_memory", extract_memory)
+    builder.add_node("policy", cast("Any", make_policy_node(backend)))
+    builder.add_node("chat", cast("Any", chat))
+    builder.add_node("extract_memory", cast("Any", extract_memory))
     # A compiled subgraph is itself a node: shared channels (messages) flow
     # in and out; its private channels (orders) stay inside.
     builder.add_node("order_agent", build_order_agent(backend).compile())

@@ -365,16 +365,21 @@ def build_server_runtime(
         auth_ctx = get_auth_ctx()
         user = auth_ctx.user if auth_ctx else None
 
+    # User implements the BaseUser duck-typed surface, but its dunder
+    # annotations are stricter than the SDK protocol's (unannotated) members,
+    # so stricter checkers (Pylance) report a protocol mismatch. The runtime
+    # behavior is correct — cast at the langgraph boundary, same as BaseStore.
+    sdk_user = cast("BaseUser | None", user)
     if is_for_execution(access_context):
         return _ExecutionRuntime(
             access_context=access_context,
-            user=user,
+            user=sdk_user,
             store=cast("BaseStore", store),  # initialized before execution-time runtimes are built
             context=context,
         )
     return _ReadRuntime(
         access_context=access_context,
-        user=user,
+        user=sdk_user,
         store=cast("BaseStore", store),
     )
 

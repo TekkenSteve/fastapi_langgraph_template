@@ -47,7 +47,7 @@ lint:
 	uv run ruff check .
 
 type-check:
-	uv run ty check src/agent_server/ --exit-zero-on-warning
+	uv run ty check src/agent_server/ src/graphs/ src/hub/ --exit-zero-on-warning
 
 arch-check:
 	uv run python scripts/check_architecture.py
@@ -88,10 +88,10 @@ pre-commit: format
 	@echo "Pre-commit gates passed — ready to commit."
 
 test:
-	uv run pytest tests/unit tests/integration tests/graphs tests/shop tests/ml
+	uv run pytest tests/unit tests/integration tests/graphs tests/shop tests/ml tests/hub
 
 test-cov:
-	uv run pytest tests/unit tests/integration tests/graphs tests/shop tests/ml --cov=src/agent_server --cov=src/graphs --cov-report=html --cov-report=term
+	uv run pytest tests/unit tests/integration tests/graphs tests/shop tests/ml tests/hub --cov=src/agent_server --cov=src/graphs --cov-report=html --cov-report=term
 
 deps:
 	docker compose up -d postgres redis
@@ -111,11 +111,18 @@ logs:
 run:
 	uv run uvicorn --env-file .env agent_server.app.main:app --reload --host 0.0.0.0 --port 2026
 
+# CHAIN=hub targets the business chain in src/hub (its own version table);
+# default is the framework chain. Never point one chain's env at the other.
 migrate-create:
+ifeq ($(CHAIN),hub)
+	cd src/hub && uv run alembic -c alembic.ini revision --autogenerate -m "$(MSG)"
+else
 	cd src/agent_server && uv run alembic -c alembic.ini revision --autogenerate -m "$(MSG)"
+endif
 
 migrate-up:
 	cd src/agent_server && uv run alembic -c alembic.ini upgrade head
+	cd src/hub && uv run alembic -c alembic.ini upgrade head
 
 ci-check: pre-commit
 	$(MAKE) codeql

@@ -1,6 +1,6 @@
 """Routing functions: read state, return the next node name. Pure logic only."""
 
-from typing import Literal
+from typing import Literal, cast
 
 from langchain_core.messages import AIMessage
 from langgraph.graph import END
@@ -14,4 +14,4 @@ def route_after_merchant(state: State) -> Literal["tools", "__end__"]:
         raise ValueError(f"Expected AIMessage in output edges, but got {type(last).__name__}")
     if last.tool_calls:
         return "tools"
-    return END
+    return cast("Literal['tools', '__end__']", END)  # END is str-typed in the stubs

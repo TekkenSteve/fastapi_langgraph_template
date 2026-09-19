@@ -4,6 +4,8 @@ Central place for provider/model selection. Extend here (model aliases,
 per-tier defaults, fallback chains) instead of inside individual graphs.
 """
 
+from typing import cast
+
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 
@@ -43,7 +45,8 @@ def load_chat_model_with_fallbacks(
     model = load_chat_model(fully_specified_name)
     if not fallbacks:
         return model
-    return model.with_fallbacks([load_chat_model(f) for f in fallbacks])
+    # with_fallbacks returns Runnable in the stubs; it stays a chat model at runtime.
+    return cast("BaseChatModel", model.with_fallbacks([load_chat_model(f) for f in fallbacks]))
 
 
 # ---------------------------------------------------------------------------
@@ -69,4 +72,6 @@ def load_resilient_chat_model(
     primary = _load_resilient(fully_specified_name, max_retries, request_timeout)
     if not fallbacks:
         return primary
-    return primary.with_fallbacks([_load_resilient(f, max_retries, request_timeout) for f in fallbacks])
+    return cast(
+        "BaseChatModel", primary.with_fallbacks([_load_resilient(f, max_retries, request_timeout) for f in fallbacks])
+    )
