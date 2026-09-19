@@ -17,7 +17,9 @@ It speaks the [Agent Protocol](https://github.com/langchain-ai/agent-protocol) (
 - **Thread auto-naming**: first message sets a placeholder title instantly; a background LLM call refines it (atomic claim, concurrency-safe)
 - **ML serving**: `src/ml/` domain package — ModelBackend protocol (swap joblib/ONNX/API backends), JSON model artifact, `POST /ml/predict`, and the model exposed as an agent tool (merchant's `predict_price`)
 - **Rate limiting**: per-identity limits via the `limits` library — tighter tier on run/streaming endpoints, Redis-backed across replicas when the broker is enabled (opt-in: `RATE_LIMIT_ENABLED`)
+- **OWASP hardening**: security headers on every response (Swagger-friendly CSP, HSTS outside LOCAL) + Content-Length body cap (413) — pure-ASGI middleware, SSE-safe
 - **MCP tools**: `research_agent` can load tools from any MCP server (`RESEARCH_MCP_SERVERS`, langchain-mcp-adapters); a bundled demo stdio server proves the path
+- **Skill & MCP hub** (`src/hub/`, app-layer): three trust tiers — builtin, deployment registry (`langgraph.json` / env), and user-installed (`/skills` + `/mcp-connections` APIs, own migration chain). Full Agent Skills spec support, per-user MCP OAuth on the official SDK (LangGraph interrupt UX), Fernet-encrypted credentials, per-server circuit breakers, MCP Apps host proxy (`/hub/mcp/{name}/...`), policy engine port with OPA sidecar option (`deployments/opa/`), sandboxed skill-script execution bridge (`SANDBOX_PROVIDER`). See `docs/design/hub.md`
 
 ## Quick start
 

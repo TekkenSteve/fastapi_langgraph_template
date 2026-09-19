@@ -74,6 +74,8 @@ class AppSettings(EnvBase):
     HOST: str = "0.0.0.0"  # nosec B104
     PORT: int = 2026
     SERVER_URL: str | None = None
+    # Reject bodies larger than this from Content-Length (413), before parsing.
+    REQUEST_BODY_MAX_SIZE: int = 10 * 1024 * 1024
 
     @model_validator(mode="after")
     def _validate_keepalive_interval(self) -> "AppSettings":
@@ -477,6 +479,44 @@ class EventStreamingSettings(EnvBase):
     FF_V2_EVENT_STREAMING: bool = True
 
 
+class McpSettings(EnvBase):
+    """MCP tool loading knobs (repo/graphs/mcp_loader.py)."""
+
+    MCP_USER_TOOLS_CACHE_TTL_SECS: float = 60.0
+    # Per-server circuit breaker: after this many consecutive handshake
+    # failures, skip the server for the cooldown window.
+    MCP_BREAKER_THRESHOLD: int = 5
+    MCP_BREAKER_COOLDOWN_SECS: float = 60.0
+    # MCP Apps (SEP-1865): advertise the ui capability in MCP handshakes and
+    # filter app-only tools out of model-facing lists (repo/graphs/mcp_apps.py).
+    MCP_APPS_ENABLED: bool = False
+    # Per-invocation authorization of MCP tool calls via the policy engine
+    # (auth/tool_authz.py). Fail-closed: LocalPolicyEngine denies ownerless
+    # tool resources — enable this with a real policy backend configured.
+    MCP_TOOL_AUTHZ_ENABLED: bool = False
+
+
+class CryptoSettings(EnvBase):
+    """Credential encryption at rest (infra/crypto.py)."""
+
+    # Fernet key. Required outside LOCAL; LOCAL falls back to a public dev
+    # key. Set _PREVIOUS to the old key during rotation so old ciphertext
+    # still reads.
+    MCP_TOKEN_ENCRYPTION_KEY: str = ""
+    MCP_TOKEN_ENCRYPTION_KEY_PREVIOUS: str = ""
+
+
+class PolicySettings(EnvBase):
+    """Policy engine externalization (auth/opa_policy.py)."""
+
+    # When OPA_URL is set, the policy engine port is backed by an OPA sidecar
+    # instead of LocalPolicyEngine.
+    OPA_URL: str = ""
+    OPA_POLICY_PACKAGE: str = "hub/authz"
+    OPA_TIMEOUT_SECS: float = 5.0
+    OPA_FAIL_CLOSED: bool = True
+
+
 class Settings:
     """Container object that instantiates all application settings groups."""
 
@@ -491,6 +531,9 @@ class Settings:
         self.cron = CronSettings()
         self.thread_ttl = ThreadTTLSettings()
         self.event_streaming = EventStreamingSettings()
+        self.mcp = McpSettings()
+        self.crypto = CryptoSettings()
+        self.policy = PolicySettings()
 
 
 settings = Settings()

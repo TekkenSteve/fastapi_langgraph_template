@@ -168,6 +168,18 @@ EXEMPT_PATHS: Final[frozenset[str]] = frozenset(
         "/shop/cart",  # identity via require_auth dependency, not @auth.on
         "/ml/predict",  # public inference demo
         "/ml/health",  # model readiness probe
+        "/hub/oauth/callback",  # browser redirect from external auth server; protected by unguessable state
+        # hub (app-layer package src/hub): identity via auth_dependency, tenant
+        # scoping + policy engine in the services — not @auth.on dispatch.
+        "/skills",
+        "/skills/import",
+        "/skills/{name}",
+        "/mcp-connections",
+        "/mcp-connections/{name}",
+        "/hub/mcp/{name}/tools/list",
+        "/hub/mcp/{name}/tools/call",
+        "/hub/mcp/{name}/resources/list",
+        "/hub/mcp/{name}/resources/read",
         "/docs/oauth2-redirect",
     }
 )

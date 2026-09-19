@@ -4604,6 +4604,146 @@
         "title": "InfoResponse",
         "description": "Info endpoint response model"
       },
+      "McpConnectionCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "transport": {
+            "type": "string",
+            "const": "streamable_http",
+            "title": "Transport",
+            "default": "streamable_http"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "auth_type": {
+            "type": "string",
+            "enum": [
+              "none",
+              "headers",
+              "oauth"
+            ],
+            "title": "Auth Type",
+            "default": "none"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Headers",
+            "description": "Credentials; write-only, never returned"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "url"
+        ],
+        "title": "McpConnectionCreate",
+        "description": "Create payload. ``transport`` is declared and pinned to the only value\nthe user tier supports, so a future second transport is a conscious API\nchange, not a silent acceptance.\n\n``auth_type``: ``none`` (no credentials), ``headers`` (static headers,\nwrite-only), or ``oauth`` (per-user SDK-driven flow \u2014 the user completes\nauthorization in their browser on first use; see hub/oauth/)."
+      },
+      "McpConnectionUpdate": {
+        "properties": {
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "headers": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Headers"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          }
+        },
+        "type": "object",
+        "title": "McpConnectionUpdate",
+        "description": "Patch payload. ``headers`` replaces the whole set when present."
+      },
+      "McpConnectionView": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "transport": {
+            "type": "string",
+            "title": "Transport"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "auth_type": {
+            "type": "string",
+            "title": "Auth Type"
+          },
+          "header_keys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Header Keys"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "transport",
+          "url",
+          "auth_type",
+          "header_keys",
+          "enabled",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "McpConnectionView",
+        "description": "Response model \u2014 header *keys* only, values never leave the server."
+      },
       "McpServerStatus": {
         "properties": {
           "name": {
@@ -4632,6 +4772,22 @@
               }
             ],
             "title": "Error"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": "registry"
+          },
+          "breaker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Breaker"
           }
         },
         "type": "object",
@@ -4657,6 +4813,20 @@
           "features"
         ],
         "title": "PredictRequest"
+      },
+      "ResourceReadRequest": {
+        "properties": {
+          "uri": {
+            "type": "string",
+            "title": "Uri"
+          }
+        },
+        "type": "object",
+        "required": [
+          "uri"
+        ],
+        "title": "ResourceReadRequest",
+        "description": "Payload for the resources/read proxy."
       },
       "Run": {
         "properties": {
@@ -5064,6 +5234,191 @@
         "type": "object",
         "title": "RunsCancel",
         "description": "Selector for ``POST /runs/cancel``: a status filter, or thread_id plus run_ids."
+      },
+      "SkillDetail": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "license": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "License"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          },
+          "tier": {
+            "type": "string",
+            "title": "Tier",
+            "default": "user"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/SkillFileView"
+            },
+            "type": "array",
+            "title": "Files"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "created_at",
+          "updated_at",
+          "files"
+        ],
+        "title": "SkillDetail",
+        "description": "Detail view including every file."
+      },
+      "SkillFileInput": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path",
+            "description": "Relative POSIX path, e.g. SKILL.md or scripts/helper.py"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "UTF-8 text content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "content"
+        ],
+        "title": "SkillFileInput",
+        "description": "One file of an install payload, path relative to the skill root."
+      },
+      "SkillFileView": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "content"
+        ],
+        "title": "SkillFileView",
+        "description": "A file as returned by the API (text content, never raw bytes)."
+      },
+      "SkillImportRequest": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "http(s) URL of a raw SKILL.md or .zip skill archive"
+          }
+        },
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "title": "SkillImportRequest",
+        "description": "Import from a URL pointing at a raw SKILL.md or a .zip archive."
+      },
+      "SkillInstall": {
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/SkillFileInput"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Files"
+          }
+        },
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "title": "SkillInstall",
+        "description": "Install/replace payload: a flat file list containing SKILL.md."
+      },
+      "SkillSummary": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "license": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "License"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          },
+          "tier": {
+            "type": "string",
+            "title": "Tier",
+            "default": "user"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "SkillSummary",
+        "description": "List view of an installed user-tier skill."
       },
       "StoreDeleteRequest": {
         "properties": {
@@ -6080,6 +6435,25 @@
         "type": "object",
         "title": "ThreadUpdate",
         "description": "Request model for updating threads"
+      },
+      "ToolCallRequest": {
+        "properties": {
+          "tool_name": {
+            "type": "string",
+            "title": "Tool Name"
+          },
+          "args": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Args"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tool_name"
+        ],
+        "title": "ToolCallRequest",
+        "description": "Payload for the tools/call proxy."
       },
       "ValidationError": {
         "properties": {

@@ -98,3 +98,6 @@ Thumbs.db
 # The upstream projects this template was derived from. Remove this line
 # if you want them tracked.
 archive/
+
+# Local design notes — kept out of version control.
+docs/design/

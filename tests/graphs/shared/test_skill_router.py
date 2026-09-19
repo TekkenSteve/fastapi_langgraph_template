@@ -1,14 +1,18 @@
 """Unit tests for the skill router middleware and its selectors."""
 
+import tempfile
+from pathlib import Path
 from typing import Any
 
 import pytest
+from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.filesystem import FilesystemBackend
 from langchain_core.embeddings import Embeddings
 from langchain_core.messages import HumanMessage
 
 from research_agent.agent import SKILLS_DIR
 from shared.middleware.skill_router import (
+    USER_SKILLS_PATH,
     EmbeddingSkillSelector,
     SkillRouterMiddleware,
     _cosine,
@@ -105,3 +109,97 @@ async def test_embedding_selector_ranks_by_similarity() -> None:
     selector = EmbeddingSkillSelector(_FakeEmbeddings(), top_k=1)
     selected = await selector.select("research a topic", skills)
     assert selected[0]["name"] == "web-research"
+
+
+# --- user-tier materialization (skill hub) -----------------------------------
+
+
+def _user_skill_md(name: str, description: str) -> str:
+    return f"---\nname: {name}\ndescription: {description}\n---\n# {name}\n"
+
+
+def _hub_middleware(tmp: str, loader):
+    """Middleware whose default backend is a writable tmp dir — StateBackend
+    requires a live graph context, which a unit test does not have."""
+    backend = CompositeBackend(
+        default=FilesystemBackend(root_dir=Path(tmp), virtual_mode=True),
+        routes={"/skills/": FilesystemBackend(root_dir=SKILLS_DIR, virtual_mode=True)},
+    )
+    return SkillRouterMiddleware(
+        backend=backend,
+        sources=[("/skills/", "Project")],
+        selector=_KeywordSelector(),
+        user_skills_loader=loader,
+    )
+
+
+async def test_user_skills_loader_appends_user_source() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        middleware = _hub_middleware(tmp, loader=None)
+        assert USER_SKILLS_PATH not in middleware.sources
+        middleware = _hub_middleware(tmp, loader=lambda uid: [])
+        assert middleware.sources[-1] == USER_SKILLS_PATH
+        assert middleware.source_labels[-1] == "User"
+
+
+async def test_materializes_user_skills_into_default_backend() -> None:
+    async def loader(user_id: str) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "coffee-brewing",
+                "files": {
+                    "SKILL.md": _user_skill_md("coffee-brewing", "brew coffee"),
+                    "scripts/ratio.py": "def ratio(d):\n    return d * 16\n",
+                },
+            }
+        ]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        middleware = _hub_middleware(tmp, loader)
+        state = {"messages": [HumanMessage(content="coffee-brewing please")]}
+        update = await middleware.abefore_agent(state, None, {"configurable": {"user_id": "u1"}})
+
+        names = {s["name"] for s in update["skills_metadata"]}
+        assert "coffee-brewing" in names
+        assert (Path(tmp) / "user-skills" / "coffee-brewing" / "SKILL.md").exists()
+        assert (Path(tmp) / "user-skills" / "coffee-brewing" / "scripts" / "ratio.py").exists()
+
+
+async def test_user_skill_overrides_same_named_builtin() -> None:
+    async def loader(user_id: str) -> list[dict[str, Any]]:
+        return [{"name": "web-research", "files": {"SKILL.md": _user_skill_md("web-research", "USER version")}}]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        middleware = _hub_middleware(tmp, loader)
+        state = {"messages": [HumanMessage(content="web-research")]}
+        update = await middleware.abefore_agent(state, None, {"configurable": {"user_id": "u1"}})
+
+        by_name = {s["name"]: s for s in update["skills_metadata"]}
+        assert by_name["web-research"]["description"] == "USER version"
+        assert by_name["web-research"]["path"].startswith(USER_SKILLS_PATH)
+
+
+async def test_loader_failure_degrades_to_builtin_only() -> None:
+    async def loader(user_id: str) -> list[dict[str, Any]]:
+        raise ConnectionError("db down")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        middleware = _hub_middleware(tmp, loader)
+        state = {"messages": [HumanMessage(content="web-research")]}
+        update = await middleware.abefore_agent(state, None, {"configurable": {"user_id": "u1"}})
+        assert {s["name"] for s in update["skills_metadata"]} == {"web-research"}
+
+
+async def test_no_user_id_skips_loader() -> None:
+    called = False
+
+    async def loader(user_id: str) -> list[dict[str, Any]]:
+        nonlocal called
+        called = True
+        return []
+
+    with tempfile.TemporaryDirectory() as tmp:
+        middleware = _hub_middleware(tmp, loader)
+        state = {"messages": [HumanMessage(content="web-research")]}
+        await middleware.abefore_agent(state, None, {})
+        assert not called

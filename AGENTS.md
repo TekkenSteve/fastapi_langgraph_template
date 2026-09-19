@@ -122,6 +122,42 @@ Work outward, mirroring how `threads` does it: `domain/<name>.py` → ORM table 
 `repo/orm.py` → framework schema: `make migrate-create` → service in `usecase/` → router in
 `controller/http/routers/` → wiring in `app/main.py` → tests.
 
+## The hub (`src/hub/`: skills + MCP connections + OAuth)
+
+An **application-layer** domain package (same tier as `src/shop`/`src/ml`), not part
+of the protocol server: routes register through `http_app.py`, tables migrate through
+its own alembic chain (`src/hub/migrations`, `alembic_version_hub` — never the
+framework chain), and graphs import its loaders directly. Three trust tiers, user
+overriding registry overriding builtin — full design in `docs/design/hub.md`.
+Rules that keep it safe:
+
+- **The framework keeps only ports.** `auth/policy.py` (policy engine, typed
+  vocabulary — `ResourceType` is a value object, families declared by consumers),
+  `infra/crypto.py` (Fernet), and `mcp_loader`'s injected `connection_provider`.
+  `with_mcp_tools(user_scoped=True)` without a provider fails at graph-authoring time.
+- **stdio MCP is a deployment privilege.** User-tier connections are `streamable_http`
+  only; never accept a `command` field from a user-facing API.
+- **Credentials are write-only and encrypted at rest.** `EncryptedJson` (Fernet)
+  at the column type boundary; responses return header key names only.
+- **User skill scripts are inert by default.** They land in the run's ephemeral state
+  filesystem (or the sandbox FS when `SANDBOX_PROVIDER` is set), not the pod disk.
+  The execution bridge is `graphs/shared/sandbox.py`: `monty` runs Python-only in
+  capability-locked subprocess workers (preferred lightweight tier), `local` is
+  dev-only (no isolation), `daytona`/`e2b` run off-pod — never execute user
+  scripts with the server's identity in production.
+- **OAuth rides the MCP SDK** (`OAuthClientProvider`), never a hand-rolled flow:
+  hub implements only TokenStorage (memory dev / Redis prod; DCR in Postgres) and
+  the browser-interrupt UX (LangGraph interrupt with connect_url).
+- **Authorization funnels through the policy engine port (async)**, constructor-injected;
+  `CompositePolicyEngine` AND-composes additive rules. Externalizing is a deployment
+  choice: set `OPA_URL` for the OPA sidecar (`deployments/opa/`), or implement the
+  same port for OpenFGA/SpiceDB.
+- **MCP reliability/UX building blocks**: vendored circuit breakers per server
+  (`infra/circuit_breaker.py`, Redis-shared when the broker is on), stringified-JSON
+  args repair, MCP Apps
+  (SEP-1865) capability advertisement + app-only tool filtering + host proxy routes
+  (`/hub/mcp/{name}/...`).
+
 ## Testing
 
 - pytest, async-aware (`asyncio_mode = auto`). Arrange-Act-Assert; names describe behavior

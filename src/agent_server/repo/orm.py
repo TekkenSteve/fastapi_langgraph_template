@@ -13,6 +13,7 @@ Nothing is auto-imported by FastAPI yet; routers will `from ...core.db import ge
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Any
@@ -33,6 +34,8 @@ from sqlalchemy.engine import Dialect
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapped, declarative_base, mapped_column
 from sqlalchemy.types import TypeDecorator
+
+from agent_server.infra.crypto import decrypt_secret, encrypt_secret
 
 _logger = structlog.getLogger(__name__)
 
@@ -86,6 +89,28 @@ class JsonbSafe(TypeDecorator):
 
     def process_bind_param(self, value: Any, dialect: Dialect) -> Any:
         return _strip_null_bytes(value)
+
+
+class EncryptedJson(TypeDecorator):
+    """JSON payload encrypted at rest: a Fernet token in a Text column.
+
+    Encrypt-on-bind / decrypt-on-result at the type boundary, so no query
+    path can accidentally store credentials in plaintext (the same role
+    JsonbSafe plays for NULL bytes). Key management lives in infra/crypto.
+    """
+
+    impl = Text
+    cache_ok = True
+
+    def process_bind_param(self, value: Any, dialect: Dialect) -> str | None:
+        if value is None:
+            return None
+        return encrypt_secret(json.dumps(value))
+
+    def process_result_value(self, value: Any, dialect: Dialect) -> Any:
+        if value is None:
+            return None
+        return json.loads(decrypt_secret(value))
 
 
 Base = declarative_base()
