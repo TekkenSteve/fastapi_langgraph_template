@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from agent_server.config.settings import settings
 from hub.api import public_router as hub_public_router
 from hub.api import router as hub_router
 from hub.migrate import run_hub_migrations_if_needed
@@ -25,8 +26,12 @@ from shop.api import router as shop_router
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # Business chains respect the same multi-pod knob as the framework chain
+    # (app/main.py): RUN_MIGRATIONS_ON_STARTUP=false → migrate out of band
+    # (`make migrate-up`), so N replicas don't race alembic on startup.
     # Alembic env.py owns its own event loop — hand off to a thread.
-    await asyncio.to_thread(run_hub_migrations_if_needed)
+    if settings.app.RUN_MIGRATIONS_ON_STARTUP:
+        await asyncio.to_thread(run_hub_migrations_if_needed)
     ml_service.load_model()
     yield
     ml_service.unload_model()
