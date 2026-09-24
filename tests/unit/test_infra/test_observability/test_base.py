@@ -1,6 +1,6 @@
 """Unit tests for observability base system"""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -245,19 +245,30 @@ class TestIntegrationWithOpenTelemetry:
     """Test integration with the OpenTelemetry provider"""
 
     def test_otel_provider_can_be_registered(self):
-        """Test that OpenTelemetry provider can be correctly registered in the manager"""
-        # Get the singleton manager
+        """An enabled OTEL provider registers into the singleton manager."""
         manager = get_observability_manager()
-        # Clear existing to ensure clean state
         manager._providers.clear()
 
-        # Import the OTEL provider
         from agent_server.infra.observability.otel import otel_provider
 
-        # Manually register (simulating startup)
-        manager.register_provider(otel_provider)
+        # Enabled state is fixed at the singleton's import time from ambient
+        # settings, so arrange it here instead of relying on another test
+        # having set OTEL_TARGETS first (this file used to pass only when
+        # test_app/test_main.py's setenv ran earlier in the session).
+        with patch.object(otel_provider, "_enabled", True):
+            manager.register_provider(otel_provider)
+            assert otel_provider in manager._providers
 
-        assert otel_provider in manager._providers
+    def test_disabled_otel_provider_is_not_registered(self):
+        """A disabled provider must be skipped, not appended."""
+        manager = get_observability_manager()
+        manager._providers.clear()
+
+        from agent_server.infra.observability.otel import otel_provider
+
+        with patch.object(otel_provider, "_enabled", False):
+            manager.register_provider(otel_provider)
+            assert otel_provider not in manager._providers
 
     def test_otel_provider_returns_empty_callbacks(self):
         """Test that OTEL provider returns empty callbacks (it uses global auto-instrumentation)"""
