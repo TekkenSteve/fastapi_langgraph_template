@@ -35,10 +35,9 @@ async def fetch_bytes(url: str, *, max_bytes: int, timeout: float) -> bytes:
         current = await validate_public_http_url(url)
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
             for _hop in range(_MAX_REDIRECT_HOPS + 1):
-                # Every hop (this one included) has passed validate_public_http_url:
-                # scheme allowlist plus a public-only check of every DNS answer —
-                # see infra/url_guard.py; the alert below is reviewed and annotated.
-                # codeql[py/full-ssrf]
+                # Every hop (this one included) has passed validate_public_http_url —
+                # strict canonical form, scheme allowlist, public-only host resolution
+                # (infra/url_guard.py).
                 async with client.stream("GET", current) as response:
                     if response.status_code in _REDIRECT_STATUSES:
                         location = response.headers.get("location")

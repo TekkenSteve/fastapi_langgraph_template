@@ -7,6 +7,14 @@ module is that gate — every outbound fetch of user input goes through
 ``validate_public_http_url`` first:
 
 - the scheme must be http or https;
+- the whole URL must match a strict canonical form before any parsing. The
+  guard reasons about the URL with ``urlsplit`` while the fetch itself goes
+  through httpx's own parser, and the two disagree on backslashes,
+  percent-encoded hosts, embedded userinfo and other RFC 3986 edge cases —
+  e.g. ``http://169.254.169.254\\@evil.com/`` parses as *public* evil.com to
+  urlsplit but as the metadata IP to httpx. Only canonical URLs (plain
+  hostname or bracketed IPv6, optional port, printable-ASCII path) pass, so
+  both parsers necessarily see the same authority;
 - the host — a literal IP, or *every* address DNS answers with — must be a
   public unicast address: loopback, RFC1918, CGNAT, link-local (including the
   169.254.169.254 cloud-metadata address), unique-local, multicast, reserved
@@ -25,10 +33,30 @@ see ``skill_fetcher`` for the fetch-side half of this contract.
 
 import asyncio
 import ipaddress
+import re
 import socket
 from urllib.parse import urlsplit
 
 ALLOWED_SCHEMES = frozenset({"http", "https"})
+
+# Canonical URL grammar enforced before any parsing (see module docstring for
+# why the parsers must not be allowed to disagree). Hostname labels are RFC
+# 1123 (no underscores, no trailing dot, no percent- or non-ASCII hosts); IPv6
+# literals must be bracketed; the optional path/query/fragment is restricted
+# to printable ASCII so no control characters or spaces ride along.
+_STRICT_URL = re.compile(
+    r"""
+    https?://                                                # scheme
+    (?:                                                      # authority: either
+        [A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?             #   a hostname label
+        (?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*      #   plus further labels
+      | \[[0-9A-Fa-f:.]+\]                                   #   or a bracketed IPv6 literal
+    )
+    (?::[0-9]{1,5})?                                         # optional port
+    (?:[/?#][!-~]*)?                                         # optional ASCII path?query#frag
+    """,
+    re.VERBOSE,
+)
 
 # Carrier-grade NAT (RFC 6598). Python only folds it into is_private from
 # 3.13 on, so it is listed explicitly to keep 3.12 honest.
@@ -74,6 +102,14 @@ async def validate_public_http_url(url: str) -> str:
     host = parts.hostname
     if not host:
         raise UrlGuardError("URL has no host")
+
+    # Canonical form before any parsing (see _STRICT_URL): everything the two
+    # URL parsers could disagree about is refused outright.
+    if not _STRICT_URL.fullmatch(url):
+        raise UrlGuardError(
+            "URL is not in canonical http(s) form — plain host or [IPv6], optional port, "
+            "ASCII path; no userinfo, backslashes or percent-encoded hosts"
+        )
 
     try:
         literal = ipaddress.ip_address(host)

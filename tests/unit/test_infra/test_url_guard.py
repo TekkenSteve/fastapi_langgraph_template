@@ -73,6 +73,43 @@ class TestLiteralIps:
             await validate_public_http_url(_url(host))
 
 
+class TestUrlForm:
+    """The canonical-form gate: parser-differential inputs never reach parsing."""
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/skill.md",
+            "http://93.184.216.34",
+            "https://example.com:8443/a/b?c=d#frag",
+            "https://example.com?q=1",
+            "http://single-label:9000",
+            "https://[2606:4700::1111]/skill.zip",
+        ],
+    )
+    async def test_canonical_forms_pass(self, url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Hostname forms need DNS; stub it public so only the form is under test.
+        monkeypatch.setattr(url_guard, "_resolve", Mock(return_value=[_addr("93.184.216.34")]))
+        assert await validate_public_http_url(url) == url
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://user:pass@example.com/skill.md",  # userinfo in authority
+            "http://169.254.169.254\\@evil.com/",  # backslash: urlsplit sees evil.com, httpx sees the IP
+            "https://exa%2fmple.com/",  # percent-encoded host
+            "https://example.com./x",  # trailing-dot host
+            "https://exa_mple.com/",  # underscore label
+            "https://bücher.example/",  # non-ASCII host
+            "https://example.com/a b",  # space in path
+            "https://[fe80::1%25eth0]/",  # IPv6 zone id
+        ],
+    )
+    async def test_non_canonical_forms_are_refused(self, url: str) -> None:
+        with pytest.raises(UrlGuardError, match="canonical"):
+            await validate_public_http_url(url)
+
+
 class TestHostnames:
     async def test_public_answers_pass(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(url_guard, "_resolve", Mock(return_value=[_addr("93.184.216.34")]))
