@@ -137,7 +137,9 @@ async def test_replace_requires_matching_name_and_existing_skill(session) -> Non
 async def test_mcp_connection_crud_and_tenant_isolation(session) -> None:
     service = _conn_service(session)
     view = await service.create(
-        McpConnectionCreate(name="db-kb", url="https://mcp.example.com/kb", headers={"X-Key": "s3cret"})
+        McpConnectionCreate(
+            name="db-kb", url="https://mcp.example.com/kb", auth_type="headers", headers={"X-Key": "s3cret"}
+        )
     )
     assert view.header_keys == ["X-Key"]
     assert "s3cret" not in view.model_dump_json()
