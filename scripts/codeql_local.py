@@ -50,6 +50,12 @@ DEFAULT_CLI = Path.home() / ".codeql" / "codeql" / "codeql"
 # Suite shorthand (what the action accepts) → fully-qualified CLI reference.
 SUITES_PACK = "codeql/{lang}-queries:codeql-suites/{lang}-{alias}.qls"
 
+# Contextual query that maps `# codeql[rule-id]` source comments onto SARIF
+# results as suppressions. github/codeql-action runs it implicitly; without it
+# the CLI lists inline-suppressed findings as ordinary alerts and the local
+# report drifts from what code scanning actually shows.
+ALERT_SUPPRESSION_QUERY = "codeql/{lang}-queries:AlertSuppression.ql"
+
 
 # --------------------------------------------------------------------------
 # Config
@@ -213,6 +219,7 @@ def run_analysis(cli: Path, config: CodeqlConfig) -> None:
     suites = config.cli_suite_refs()
     if not suites:
         sys.exit(f"[codeql] no `queries:` entries in {CONFIG_PATH}")
+    suites.append(ALERT_SUPPRESSION_QUERY.format(lang=config.language))
     WORK_DIR.mkdir(exist_ok=True)
     _run(
         [
@@ -245,6 +252,7 @@ class Finding:
     message: str
     file: str
     line: int
+    suppressed: bool = False  # annotated in source with `# codeql[rule-id]`
 
 
 @dataclass
@@ -298,6 +306,7 @@ def load_findings(config: CodeqlConfig) -> tuple[list[Finding], dict[str, dict]]
                     message=" ".join(res.get("message", {}).get("text", "").split()),
                     file=file,
                     line=int(region.get("startLine", 0)),
+                    suppressed=bool(res.get("suppressions")),
                 )
             )
     if skipped:
@@ -323,7 +332,8 @@ def group_findings(findings: list[Finding], meta: dict[str, dict]) -> list[RuleG
     )
 
 
-def render_report(groups: list[RuleGroup]) -> str:
+def render_report(groups: list[RuleGroup], suppressed: list[Finding] | None = None) -> str:
+    suppressed = suppressed or []
     files = {f.file for g in groups for f in g.findings}
     lines = [
         "# CodeQL local report",
@@ -346,23 +356,38 @@ def render_report(groups: list[RuleGroup]) -> str:
             for f in sorted(by_file[file], key=lambda x: x.line):
                 lines.append(f"- L{f.line}: {f.message}")
             lines.append("")
+    if suppressed:
+        lines.append("## Suppressed in source (`# codeql[…]`)")
+        lines.append("")
+        lines.append(
+            "Findings carrying a source-level suppression annotation — code scanning "
+            "closes them automatically; listed here so the decision stays auditable."
+        )
+        lines.append("")
+        for f in sorted(suppressed, key=lambda x: (x.rule, x.file, x.line)):
+            lines.append(f"- `{f.rule}` {f.file}:L{f.line} — {f.message}")
+        lines.append("")
     return "\n".join(lines)
 
 
 def summarize(config: CodeqlConfig, strict: bool) -> None:
     findings, meta = load_findings(config)
-    groups = group_findings(findings, meta)
+    active = [f for f in findings if not f.suppressed]
+    suppressed = [f for f in findings if f.suppressed]
+    groups = group_findings(active, meta)
 
     print(f"\n{'=' * 72}")
-    print(f"CodeQL: {len(findings)} findings / {len(groups)} rules")
+    print(f"CodeQL: {len(active)} findings / {len(groups)} rules")
     print(f"{'=' * 72}")
     for g in groups:
         files = {f.file for f in g.findings}
         print(f"{g.level:>7}  {g.rule:<55} {len(g.findings):>3}× in {len(files)} files")
     if not groups:
         print("clean — no findings 🎉")
+    if suppressed:
+        print(f"{len(suppressed)} finding(s) suppressed in source — see the report's suppression section")
 
-    REPORT_PATH.write_text(render_report(groups))
+    REPORT_PATH.write_text(render_report(groups, suppressed))
     print(f"\nfull grouped report: {REPORT_PATH}")
 
     if strict and any(g.level == "error" for g in groups):
