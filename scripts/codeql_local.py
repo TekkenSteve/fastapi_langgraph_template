@@ -151,14 +151,34 @@ def ensure_cli(cli: Path) -> None:
     print(f"[codeql] checksum OK ({expected[:16]}…)")
 
     print(f"[codeql] extracting into {dest_dir} (this takes a minute)")
-    with tarfile.open(archive, "r:zst") as tar:
-        tar.extractall(dest_dir, filter="data")
+    _extract_zst(archive, dest_dir)
     archive.unlink()
     checksum_path.unlink()
 
     if not cli.exists():
         sys.exit(f"[codeql] bundle extracted but CLI not found at {cli}")
     print(f"[codeql] installed: {cli}")
+
+
+def _extract_zst(archive: Path, dest_dir: Path) -> None:
+    """Extract the zstd-compressed bundle.
+
+    Python's tarfile only speaks zst from 3.14 on; on older interpreters fall
+    back to GNU tar, which shells out to the zstd binary.
+    """
+    try:
+        with tarfile.open(archive, "r:zst") as tar:
+            tar.extractall(dest_dir, filter="data")
+    except tarfile.CompressionError:
+        try:
+            subprocess.run(
+                ["tar", "--zstd", "-xf", str(archive), "-C", str(dest_dir)],
+                check=True,
+            )
+        except FileNotFoundError:
+            sys.exit("extracting the CodeQL bundle needs Python >= 3.14 or GNU tar with zstd support")
+        except subprocess.CalledProcessError as exc:
+            sys.exit(f"[codeql] tar failed with status {exc.returncode}")
 
 
 # --------------------------------------------------------------------------
