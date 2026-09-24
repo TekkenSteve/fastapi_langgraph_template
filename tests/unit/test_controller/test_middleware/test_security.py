@@ -34,8 +34,14 @@ def test_security_headers_present_on_success(client: TestClient) -> None:
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["x-frame-options"] == "DENY"
     assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
-    assert "content-security-policy" in response.headers
-    assert "cdn.jsdelivr.net" in response.headers["content-security-policy"]  # Swagger UI keeps working
+    # The whole policy is pinned, not sampled: any loosening (extra origins,
+    # dropped directives) fails here rather than shipping.
+    assert response.headers["content-security-policy"] == (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "img-src 'self' data: https://cdn.jsdelivr.net https://fastapi.tiangolo.com"
+    )
     assert "x-xss-protection" not in response.headers  # deprecated per current OWASP guidance
 
 
