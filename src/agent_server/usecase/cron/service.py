@@ -398,6 +398,8 @@ class CronService:
             stmt = stmt.where(CronORM.assistant_id == resolved_assistant_id)
         if request.thread_id is not None:
             stmt = stmt.where(CronORM.thread_id == request.thread_id)
+        if request.metadata:
+            stmt = stmt.where(CronORM.metadata_dict.op("@>")(request.metadata))
         if request.enabled is not None:
             stmt = stmt.where(CronORM.enabled == request.enabled)
 
@@ -431,6 +433,8 @@ class CronService:
             stmt = stmt.where(CronORM.assistant_id == resolved_assistant_id)
         if request.thread_id is not None:
             stmt = stmt.where(CronORM.thread_id == request.thread_id)
+        if request.metadata:
+            stmt = stmt.where(CronORM.metadata_dict.op("@>")(request.metadata))
 
         total = await self.session.scalar(stmt)
         return total or 0

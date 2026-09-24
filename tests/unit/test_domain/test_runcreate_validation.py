@@ -1,5 +1,7 @@
 """Tests for RunCreate model validation."""
 
+from uuid import uuid4
+
 import pytest
 from pydantic import ValidationError
 
@@ -30,6 +32,21 @@ class TestRunCreateValidation:
         """Ensure payloads with no input, command, or checkpoint are rejected."""
         with pytest.raises(ValueError, match="Must specify at least one of 'input', 'command', or 'checkpoint'"):
             RunCreate(assistant_id="agent")
+
+
+class TestRunCreateCheckpointId:
+    """The LangGraph SDK sends a top-level checkpoint_id on runs.create/stream/wait."""
+
+    def test_checkpoint_id_alone_satisfies_the_checkpoint_requirement(self):
+        run_create = RunCreate(assistant_id="agent", checkpoint_id=uuid4())
+
+        assert run_create.input is None
+        assert run_create.checkpoint is None
+        assert run_create.checkpoint_id is not None
+
+    def test_checkpoint_id_rejects_a_non_uuid(self):
+        with pytest.raises(ValidationError):
+            RunCreate(assistant_id="agent", checkpoint_id="not-a-uuid")
 
 
 class TestRunCreateMetadataValidation:

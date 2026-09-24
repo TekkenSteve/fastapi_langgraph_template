@@ -27,7 +27,12 @@ from agent_server.repo.orm import _get_session_maker, get_session
 from agent_server.usecase.execution.active_runs import active_runs
 from agent_server.usecase.execution.run_preparation import _prepare_run
 from agent_server.usecase.execution.run_status import interrupt_unowned_run
-from agent_server.usecase.execution.run_waiters import TERMINAL_STATES, encode_output, heartbeat_wait_body
+from agent_server.usecase.execution.run_waiters import (
+    TERMINAL_STATES,
+    encode_output,
+    heartbeat_wait_body,
+    run_result_body,
+)
 from agent_server.usecase.streaming.broker import broker_manager
 from agent_server.usecase.streaming.streaming_service import streaming_service
 from agent_server.usecase.thread_naming import maybe_name_thread
@@ -347,7 +352,7 @@ async def join_run(
 
         if run_orm.status in TERMINAL_STATES:
             return StreamingResponse(
-                iter([encode_output(run_orm.output or {})]),
+                iter([encode_output(run_result_body(run_orm, str(run_id)))]),
                 media_type="application/json",
             )
 

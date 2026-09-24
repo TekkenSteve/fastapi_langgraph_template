@@ -26,6 +26,64 @@ async def _dispatch(payload: dict[str, Any], user: User, *, session: Any = None)
     return await cmd.handle_command(payload, session=session or AsyncMock(), thread_id="t1", user=user)
 
 
+class TestForkCheckpointId:
+    """run.start has no checkpoint field: config.configurable.checkpoint_id is the fork target."""
+
+    def test_no_config_means_no_checkpoint(self) -> None:
+        checkpoint_id, error = cmd._fork_checkpoint_id({})
+        assert checkpoint_id is None
+        assert error is None
+
+    def test_no_configurable_means_no_checkpoint(self) -> None:
+        checkpoint_id, error = cmd._fork_checkpoint_id({"config": {}})
+        assert checkpoint_id is None
+        assert error is None
+
+    def test_lifts_a_uuid_checkpoint_id(self) -> None:
+        value = "0192b5cf-0000-7000-8000-000000000000"
+        checkpoint_id, error = cmd._fork_checkpoint_id({"config": {"configurable": {"checkpoint_id": value}}})
+        assert checkpoint_id == value
+        assert error is None
+
+    def test_rejects_a_non_string(self) -> None:
+        checkpoint_id, error = cmd._fork_checkpoint_id({"config": {"configurable": {"checkpoint_id": 42}}})
+        assert checkpoint_id is None
+        assert error == "config.configurable.checkpoint_id must be a UUID string."
+
+    def test_rejects_a_non_uuid_string(self) -> None:
+        checkpoint_id, error = cmd._fork_checkpoint_id({"config": {"configurable": {"checkpoint_id": "not-a-uuid"}}})
+        assert checkpoint_id is None
+        assert "Invalid config.configurable.checkpoint_id" in error
+
+    async def test_run_start_passes_the_fork_target_to_runcreate(self, prepared_run: AsyncMock, user: User) -> None:
+        """An input-less fork must still pass RunCreate validation."""
+        checkpoint_id = "0192b5cf-0000-7000-8000-000000000000"
+        await _dispatch(
+            {
+                "id": 1,
+                "method": "run.start",
+                "params": {"assistant_id": "agent", "config": {"configurable": {"checkpoint_id": checkpoint_id}}},
+            },
+            user,
+        )
+        request = prepared_run.call_args.args[2]
+        assert request.input is None
+        assert request.checkpoint == {"checkpoint_id": checkpoint_id}
+
+    async def test_run_start_rejects_an_invalid_fork_target(self, prepared_run: AsyncMock, user: User) -> None:
+        resp, run_id = await _dispatch(
+            {
+                "id": 1,
+                "method": "run.start",
+                "params": {"assistant_id": "agent", "config": {"configurable": {"checkpoint_id": "junk"}}},
+            },
+            user,
+        )
+        assert resp["error"] == "invalid_argument"
+        assert run_id is None
+        prepared_run.assert_not_called()
+
+
 class TestRunStart:
     async def test_run_start_returns_run_id(self, prepared_run: AsyncMock, user: User) -> None:
         resp, run_id = await _dispatch(

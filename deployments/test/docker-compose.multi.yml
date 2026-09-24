@@ -37,6 +37,8 @@ services:
       - "2027:2026"
     environment:
       - POSTGRES_HOST=postgres
+      # The container network always speaks to Postgres on its internal port.
+      - POSTGRES_PORT=5432
       - PYTHONPATH=/app/src
       - REDIS_BROKER_ENABLED=true
       - REDIS_URL=redis://redis:6379/0
@@ -67,6 +69,8 @@ services:
       - "2028:2026"
     environment:
       - POSTGRES_HOST=postgres
+      # The container network always speaks to Postgres on its internal port.
+      - POSTGRES_PORT=5432
       - PYTHONPATH=/app/src
       - REDIS_BROKER_ENABLED=true
       - REDIS_URL=redis://redis:6379/0

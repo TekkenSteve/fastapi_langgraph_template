@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
+from agent_server.domain.entity_ids import ENTITY_ID_PATTERN, MAX_ENTITY_ID_LENGTH
 from agent_server.domain.search_limit import (
     resolve_search_limit,
     search_limit_json_schema_extra,
@@ -49,7 +50,15 @@ class ThreadCreate(BaseModel):
     thread_id: str | None = Field(
         None,
         alias="threadId",
-        description="Optional client-provided thread ID for idempotent creation",
+        min_length=1,
+        max_length=MAX_ENTITY_ID_LENGTH,
+        pattern=ENTITY_ID_PATTERN,
+        description=(
+            "Optional client-provided thread ID for idempotent creation. "
+            "Omit or null to let the server generate a UUID. "
+            f"When set, 1-{MAX_ENTITY_ID_LENGTH} characters and not blank "
+            "(must fit PostgreSQL btree keys uncompressed)."
+        ),
     )
     if_exists: str | None = Field(
         "raise",

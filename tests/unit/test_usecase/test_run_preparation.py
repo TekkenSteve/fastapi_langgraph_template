@@ -7,7 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from agent_server.usecase.execution import run_preparation as mod
-from agent_server.usecase.execution.run_preparation import _validate_resume_command
+from agent_server.usecase.execution.run_preparation import _resolve_checkpoint, _validate_resume_command
 
 
 @pytest.fixture(autouse=True)
@@ -76,3 +76,25 @@ class TestValidateResumeCommand:
         session = _session_returning(_thread("idle"))
         await _validate_resume_command(session, "t1", None)
         session.scalar.assert_not_awaited()
+
+
+class TestResolveCheckpoint:
+    """The top-level checkpoint_id folds into checkpoint; checkpoint keys win."""
+
+    def test_no_checkpoint_id_returns_checkpoint_unchanged(self) -> None:
+        request = SimpleNamespace(checkpoint=None, checkpoint_id=None)
+        assert _resolve_checkpoint(request) is None
+
+        request = SimpleNamespace(checkpoint={"checkpoint_ns": "sub"}, checkpoint_id=None)
+        assert _resolve_checkpoint(request) == {"checkpoint_ns": "sub"}
+
+    def test_checkpoint_id_folds_into_a_missing_checkpoint(self) -> None:
+        request = SimpleNamespace(checkpoint=None, checkpoint_id="0192b5cf-0000-7000-8000-000000000000")
+        assert _resolve_checkpoint(request) == {"checkpoint_id": "0192b5cf-0000-7000-8000-000000000000"}
+
+    def test_checkpoint_keys_win_over_the_top_level_id(self) -> None:
+        request = SimpleNamespace(
+            checkpoint={"checkpoint_id": "from-checkpoint", "checkpoint_ns": "sub"},
+            checkpoint_id="0192b5cf-0000-7000-8000-000000000000",
+        )
+        assert _resolve_checkpoint(request) == {"checkpoint_id": "from-checkpoint", "checkpoint_ns": "sub"}

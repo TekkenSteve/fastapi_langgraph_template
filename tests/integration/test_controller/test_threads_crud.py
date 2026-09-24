@@ -1,8 +1,10 @@
 """Integration tests for threads CRUD operations"""
 
+import secrets
 from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
@@ -18,6 +20,7 @@ from tests.fixtures.clients import create_test_app, make_client
 from tests.fixtures.database import (
     DummyScalarResult,
     DummySessionBase,
+    apply_thread_metadata_merge,
     override_get_session_dep,
 )
 from tests.fixtures.session_fixtures import BasicSession, override_session_dependency
@@ -200,6 +203,28 @@ class TestCreateThread:
         assert resp.status_code == 200
         data = resp.json()
         assert data["thread_id"] == custom_id
+
+    def test_create_thread_rejects_oversized_random_id(self, client):
+        """Oversized ids 422 at validation; they must not reach Postgres btree."""
+        resp = client.post("/threads", json={"thread_id": secrets.token_hex(2500)})
+        assert resp.status_code == 422
+        assert "thread_id" in resp.text
+
+    def test_create_thread_rejects_empty_id(self, client):
+        resp = client.post("/threads", json={"thread_id": ""})
+        assert resp.status_code == 422
+        assert "thread_id" in resp.text
+
+    def test_create_thread_rejects_blank_id(self, client):
+        resp = client.post("/threads", json={"thread_id": "   "})
+        assert resp.status_code == 422
+        assert "thread_id" in resp.text
+
+    def test_create_thread_accepts_uuid(self, client):
+        thread_id = str(uuid4())
+        resp = client.post("/threads", json={"thread_id": thread_id})
+        assert resp.status_code == 200
+        assert resp.json()["thread_id"] == thread_id
 
     def test_create_thread_if_exists_do_nothing(self):
         """Test ifExists='do_nothing' returns existing thread"""
@@ -1192,11 +1217,14 @@ class TestUpdateThread:
             async def scalar(self, _stmt):
                 return thread
 
+            async def execute(self, stmt, *args, **kwargs):
+                # The merge happens in the database; stand in for it.
+                apply_thread_metadata_merge(stmt, thread)
+
             async def commit(self):
                 pass
 
             async def refresh(self, obj):
-                # In a real DB, refresh updates the object; here we just simulate it
                 pass
 
         app.dependency_overrides[core_get_session] = override_get_session_dep(Session)
@@ -1228,6 +1256,9 @@ class TestUpdateThread:
         class Session(DummySessionBase):
             async def scalar(self, _stmt):
                 return thread
+
+            async def execute(self, stmt, *args, **kwargs):
+                apply_thread_metadata_merge(stmt, thread)
 
             async def commit(self):
                 pass
@@ -1269,6 +1300,9 @@ class TestUpdateThread:
         class Session(DummySessionBase):
             async def scalar(self, _stmt):
                 return thread
+
+            async def execute(self, stmt, *args, **kwargs):
+                apply_thread_metadata_merge(stmt, thread)
 
             async def commit(self):
                 pass

@@ -3504,14 +3504,17 @@
           "assistant_id": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1,
+                "pattern": "\\S"
               },
               {
                 "type": "null"
               }
             ],
             "title": "Assistant Id",
-            "description": "Unique assistant identifier (auto-generated if not provided)"
+            "description": "Optional client-provided assistant ID. Omit or null to let the server generate a UUID. When set, 1-255 characters and not blank (must fit PostgreSQL btree keys uncompressed)."
           },
           "name": {
             "anyOf": [
@@ -3756,7 +3759,7 @@
               }
             ],
             "title": "Name",
-            "description": "The name of the assistant (auto-generated if not provided)"
+            "description": "The name of the assistant. Unchanged when omitted."
           },
           "description": {
             "anyOf": [
@@ -3768,7 +3771,7 @@
               }
             ],
             "title": "Description",
-            "description": "The description of the assistant. Defaults to null."
+            "description": "The description of the assistant. Unchanged when omitted."
           },
           "config": {
             "anyOf": [
@@ -3781,13 +3784,19 @@
               }
             ],
             "title": "Config",
-            "description": "Configuration to use for the graph."
+            "description": "Configuration to use for the graph. Unchanged when omitted."
           },
           "graph_id": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Graph Id",
-            "description": "The ID of the graph",
-            "default": "agent"
+            "description": "The ID of the graph. Unchanged when omitted."
           },
           "context": {
             "anyOf": [
@@ -3800,7 +3809,7 @@
               }
             ],
             "title": "Context",
-            "description": "The context to use for the graph. Useful when graph is configurable."
+            "description": "The context to use for the graph. Useful when graph is configurable. Unchanged when omitted."
           },
           "metadata": {
             "anyOf": [
@@ -3813,12 +3822,12 @@
               }
             ],
             "title": "Metadata",
-            "description": "Metadata to use for searching and filtering assistants."
+            "description": "Metadata to merge into the assistant's existing metadata."
           }
         },
         "type": "object",
         "title": "AssistantUpdate",
-        "description": "Request model for creating assistants"
+        "description": "Request model for partially updating assistants.\n\nEvery field is optional and defaults to ``None`` so that an omitted field\nis distinguishable from an explicit one via ``model_dump(exclude_unset=True)``:\nomitting ``config`` keeps the stored config, sending ``{\"config\": {}}`` clears it."
       },
       "Body_set_assistant_latest_assistants__assistant_id__latest_post": {
         "properties": {
@@ -3857,6 +3866,18 @@
               }
             ],
             "title": "Thread Id"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
           }
         },
         "type": "object",
@@ -4199,6 +4220,18 @@
               }
             ],
             "title": "Thread Id"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
           },
           "enabled": {
             "anyOf": [
@@ -5003,6 +5036,19 @@
             ],
             "title": "Checkpoint",
             "description": "Checkpoint configuration (e.g., {'checkpoint_id': '...', 'checkpoint_ns': ''})"
+          },
+          "checkpoint_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checkpoint Id",
+            "description": "Checkpoint to run from. Short form of checkpoint={'checkpoint_id': ...}; 'checkpoint' wins if both set."
           },
           "stream": {
             "type": "boolean",
@@ -5896,14 +5942,17 @@
           "threadId": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1,
+                "pattern": "\\S"
               },
               {
                 "type": "null"
               }
             ],
             "title": "Threadid",
-            "description": "Optional client-provided thread ID for idempotent creation"
+            "description": "Optional client-provided thread ID for idempotent creation. Omit or null to let the server generate a UUID. When set, 1-255 characters and not blank (must fit PostgreSQL btree keys uncompressed)."
           },
           "ifExists": {
             "anyOf": [

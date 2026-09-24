@@ -912,7 +912,7 @@ class TestWaitForRunTimeouts:
     """
 
     def test_wait_for_run_timeout(self):
-        """Test that wait_for_run returns current state on timeout."""
+        """Test that wait_for_run reports the timeout instead of partial state."""
         app = create_test_app(include_runs=True, include_threads=False)
 
         # Mock assistant and run
@@ -976,4 +976,4 @@ class TestWaitForRunTimeouts:
 
             assert resp.status_code == 200
             # StreamingResponse: body is heartbeat newlines + final JSON
-            assert resp.json() == {"partial": "data"}
+            assert resp.json()["__error__"]["error"] == "TimeoutError"

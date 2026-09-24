@@ -27,6 +27,9 @@ services:
       - .env
     environment:
       - POSTGRES_HOST=postgres
+      # The container network always speaks to Postgres on its internal port,
+      # regardless of the host-published port in POSTGRES_PUBLISH_PORT/POSTGRES_PORT.
+      - POSTGRES_PORT=5432
       - PYTHONPATH=/app/src
       - REDIS_BROKER_ENABLED=true
       - REDIS_URL=redis://redis:6379/0
