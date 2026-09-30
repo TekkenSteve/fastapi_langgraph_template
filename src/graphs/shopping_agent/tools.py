@@ -7,9 +7,11 @@ Conventions demonstrated here:
   before the model reads it.
 - Memory writes go through the shared write filter and lifecycle store.
 - checkout is a handoff: the agent never completes an order itself.
+- Generative UI: present_* tools are built from the declarations in
+  ``utils.py`` (payload models, enrich hooks, component specs).
 """
 
-from typing import Annotated, Any
+from typing import Annotated
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import InjectedToolCallId, tool
@@ -21,40 +23,18 @@ from shared.fencing import SHARED_FENCE
 from shared.memory import MemoryStore, MemoryWriteRejected
 from shared.presentation import make_presentation_tool
 from shared.tooling import tool_blocked, tool_error, tool_ok
-from shop.backends import Cart, ShopBackend
+from shop.backends import ShopBackend
 from shopping_agent.gates import check_cart_size, check_provenance, check_quantity
-from shopping_agent.presentation import (
+from shopping_agent.state import Context, State
+from shopping_agent.utils import (
     PRESENT_CHECKOUT_SUMMARY,
     PRESENT_COMPARISON,
     PRESENT_PRODUCTS,
     PRESENT_SUGGESTIONS,
+    cart_snapshot,
+    format_cart,
+    user_id_from_config,
 )
-from shopping_agent.state import Context, State
-
-
-def _user_id(config: RunnableConfig) -> str:
-    """Server injects the authenticated identity into config.configurable."""
-    return config.get("configurable", {}).get("user_id", "demo-user")
-
-
-async def _cart_snapshot(backend: ShopBackend, cart: Cart) -> dict[str, Any]:
-    """Cart payload for the live UI panel: lines joined with product facts."""
-    lines = []
-    total = 0.0
-    for line in cart.lines:
-        product = await backend.get_product(line.product_id)
-        if product is None:
-            continue
-        total += product.price * line.quantity
-        lines.append({"id": product.id, "name": product.name, "price": product.price, "quantity": line.quantity})
-    return {"lines": lines, "total": round(total, 2), "currency": "USD"}
-
-
-def _format_cart(cart: Cart) -> str:
-    if not cart.lines:
-        return "Your cart is empty."
-    lines = "\n".join(f"- {line.product_id} × {line.quantity}" for line in cart.lines)
-    return f"Cart:\n{lines}"
 
 
 def make_shop_tools(backend: ShopBackend) -> list:
@@ -77,11 +57,11 @@ def make_shop_tools(backend: ShopBackend) -> list:
         tool_call_id: Annotated[str, InjectedToolCallId],
     ) -> Command:
         """Show the current cart contents."""
-        cart = await backend.get_cart(_user_id(config))
+        cart = await backend.get_cart(user_id_from_config(config))
         return tool_ok(
-            _format_cart(cart),
+            format_cart(cart),
             tool_call_id,
-            state_update={"cart": await _cart_snapshot(backend, cart)},
+            state_update={"cart": await cart_snapshot(backend, cart)},
         )
 
     @tool
@@ -94,7 +74,7 @@ def make_shop_tools(backend: ShopBackend) -> list:
     ) -> Command:
         """Add a product to the cart. The id must come from a search result."""
         ctx = get_runtime(Context).context
-        cart = await backend.get_cart(_user_id(config))
+        cart = await backend.get_cart(user_id_from_config(config))
         for gate, error in (
             ("provenance", check_provenance(state.seen_product_ids, product_id)),
             ("quantity_limit", check_quantity(quantity, ctx.max_quantity_per_line)),
@@ -102,11 +82,11 @@ def make_shop_tools(backend: ShopBackend) -> list:
         ):
             if error is not None:
                 return tool_blocked(gate, error, tool_call_id)
-        cart = await backend.add_to_cart(_user_id(config), product_id, quantity)
+        cart = await backend.add_to_cart(user_id_from_config(config), product_id, quantity)
         return tool_ok(
-            f"Added {quantity} × {product_id}.\n{_format_cart(cart)}",
+            f"Added {quantity} × {product_id}.\n{format_cart(cart)}",
             tool_call_id,
-            state_update={"cart": await _cart_snapshot(backend, cart)},
+            state_update={"cart": await cart_snapshot(backend, cart)},
         )
 
     @tool
@@ -116,12 +96,12 @@ def make_shop_tools(backend: ShopBackend) -> list:
     ) -> Command:
         """Check out the current cart. Pauses for customer confirmation, then
         hands off to the host's checkout — the agent never completes an order."""
-        user_id = _user_id(config)
+        user_id = user_id_from_config(config)
         cart = await backend.get_cart(user_id)
         if not cart.lines:
             return tool_blocked("empty_cart", "Your cart is empty — nothing to check out.", tool_call_id)
 
-        approved = interrupt({"type": "checkout_approval", "cart": _format_cart(cart)})
+        approved = interrupt({"type": "checkout_approval", "cart": format_cart(cart)})
         if not approved:
             return tool_ok("Checkout cancelled; the cart is unchanged.", tool_call_id)
 
@@ -144,7 +124,7 @@ def make_shop_tools(backend: ShopBackend) -> list:
             return tool_error("Long-term memory is unavailable in this run.", tool_call_id)
         memory = MemoryStore(store)
         try:
-            await memory.save(_user_id(config), key, value)
+            await memory.save(user_id_from_config(config), key, value)
         except MemoryWriteRejected as exc:
             return tool_blocked("memory_write_filter", str(exc), tool_call_id)
         return tool_ok(f"Noted: {key} = {value}. I'll remember that.", tool_call_id)

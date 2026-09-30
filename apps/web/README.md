@@ -43,7 +43,7 @@ Extra surfaces on the demo page:
 - **Inspector** button (header) opens CopilotKit's AG-UI event inspector.
 - **Checkout approval** card appears in chat when the graph interrupts.
 
-The agent's `present_*` tools (`src/graphs/shopping_agent/presentation.py`)
+The agent's `present_*` tools (declared in `src/graphs/shopping_agent/utils.py`)
 write validated, server-enriched blocks into the graph's `presentations` state
 channel; `useAgent` subscribes to state changes and the registry in `page.tsx`
 renders each block as a real component. Unknown component names degrade to a

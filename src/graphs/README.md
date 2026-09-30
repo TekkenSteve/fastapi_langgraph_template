@@ -30,6 +30,7 @@ shopping_agent/
 ├── state.py           # State + Context — the single source of the data contract
 ├── prompts.py         # prompt constants (plural, always)
 ├── tools.py           # tool factories; dependencies arrive by injection
+├── utils.py           # non-tool helpers tools share: payload models, enrich hooks, formatting
 ├── gates.py           # business rules as pure functions, enforced before writes
 ├── subgraphs/         # explicit subgraphs — recursively the same structure
 │   └── order_agent/

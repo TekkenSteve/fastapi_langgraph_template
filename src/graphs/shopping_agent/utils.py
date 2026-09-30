@@ -1,12 +1,19 @@
-"""Presentation components for the shopping agent (generative UI).
+"""Non-tool support code for the shopping agent's tools.
 
-present_products renders a product carousel; present_comparison a comparison
-grid; present_checkout_summary a checkout recap; present_suggestions renders
-the turn's suggestion chips. All validate the model's arguments, then join
-every fact from the backend — the model selects ids and writes short reasons,
-it never writes names or prices.
+``tools.py`` owns the tool factories; this module owns what they share that is
+not itself a tool:
+
+- cart/user helpers: identity from the injected config, cart snapshot for the
+  live UI panel, plain-text cart formatting,
+- generative-UI declarations: payload models, server-side enrich hooks, and
+  component specs. The model selects ids and writes short reasons; every fact
+  on a component is joined server-side (names, prices, cart lines) — never
+  model-authored.
 """
 
+from typing import Any
+
+from langchain_core.runnables import RunnableConfig
 from pydantic import Field
 
 from shared.presentation import (
@@ -16,6 +23,35 @@ from shared.presentation import (
     PresentationRefused,
     SuggestionsPayload,
 )
+from shop.backends import Cart, ShopBackend
+
+
+def user_id_from_config(config: RunnableConfig) -> str:
+    """Server injects the authenticated identity into config.configurable."""
+    return config.get("configurable", {}).get("user_id", "demo-user")
+
+
+async def cart_snapshot(backend: ShopBackend, cart: Cart) -> dict[str, Any]:
+    """Cart payload for the live UI panel: lines joined with product facts."""
+    lines = []
+    total = 0.0
+    for line in cart.lines:
+        product = await backend.get_product(line.product_id)
+        if product is None:
+            continue
+        total += product.price * line.quantity
+        lines.append({"id": product.id, "name": product.name, "price": product.price, "quantity": line.quantity})
+    return {"lines": lines, "total": round(total, 2), "currency": "USD"}
+
+
+def format_cart(cart: Cart) -> str:
+    if not cart.lines:
+        return "Your cart is empty."
+    lines = "\n".join(f"- {line.product_id} × {line.quantity}" for line in cart.lines)
+    return f"Cart:\n{lines}"
+
+
+# --- Generative UI components -------------------------------------------------
 
 
 class PresentProductsPayload(PresentationPayload):
@@ -76,15 +112,7 @@ async def enrich_checkout_summary(payload: PresentationPayload, context: Enrichm
     cart = await context.backend.get_cart(context.user_id)
     if not cart.lines:
         raise PresentationRefused("the cart is empty — nothing to summarize.", gate="empty_cart")
-    products = []
-    total = 0.0
-    for line in cart.lines:
-        product = await context.backend.get_product(line.product_id)
-        if product is None:
-            continue
-        total += product.price * line.quantity
-        products.append({"id": product.id, "name": product.name, "price": product.price, "quantity": line.quantity})
-    return {"lines": products, "total": round(total, 2), "currency": "USD"}
+    return await cart_snapshot(context.backend, cart)
 
 
 PRESENT_PRODUCTS = PresentationComponent(
