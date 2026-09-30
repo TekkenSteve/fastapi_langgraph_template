@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 
+import anyio
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
@@ -61,14 +62,21 @@ def _thread_run_lister(thread_id: str, user: User) -> RunLister:
 
     async def list_run_ids() -> list[tuple[str, str | None, str | None]]:
         maker = _get_session_maker()
-        async with maker() as session:
-            rows = await session.execute(
-                select(RunORM.run_id, RunORM.status, AssistantORM.graph_id)
-                .outerjoin(AssistantORM, RunORM.assistant_id == AssistantORM.assistant_id)
-                .where(RunORM.thread_id == thread_id, RunORM.user_id == user.identity)
-                .order_by(RunORM.created_at.asc())
-            )
-            return [(run_id, status, graph_id) for run_id, status, graph_id in rows.all()]
+        listed: list[tuple[str, str | None, str | None]] | None = None
+        # sse-starlette's anyio cancel punches through asyncio.shield (#530):
+        # without this scope the cancel GC-terminates the asyncpg checkout.
+        with anyio.CancelScope(shield=True):
+            async with maker() as session:
+                rows = await session.execute(
+                    select(RunORM.run_id, RunORM.status, AssistantORM.graph_id)
+                    .outerjoin(AssistantORM, RunORM.assistant_id == AssistantORM.assistant_id)
+                    .where(RunORM.thread_id == thread_id, RunORM.user_id == user.identity)
+                    .order_by(RunORM.created_at.asc())
+                )
+                listed = [(run_id, status, graph_id) for run_id, status, graph_id in rows.all()]
+        # A shielded scope nothing cancels can only complete or re-raise, never swallow.
+        assert listed is not None
+        return listed
 
     return list_run_ids
 
