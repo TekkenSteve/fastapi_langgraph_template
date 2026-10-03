@@ -56,6 +56,7 @@ from agent_server.repo.migrations import run_migrations_async
 from agent_server.usecase.cron.scheduler import cron_scheduler
 from agent_server.usecase.execution.executor import executor
 from agent_server.usecase.execution.lease_reaper import lease_reaper
+from agent_server.usecase.execution.run_preparation import get_default_durability
 from agent_server.usecase.streaming.broker import broker_manager
 from agent_server.usecase.thread_ttl import get_thread_ttl_config, thread_ttl_sweeper
 
@@ -96,6 +97,9 @@ def _log_connection_help(error: Exception) -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """FastAPI lifespan context manager for startup/shutdown"""
+    # Resolve the durability default up front: an invalid value fails the boot, not every run.
+    get_default_durability()
+
     # Multi-pod K8s: set RUN_MIGRATIONS_ON_STARTUP=false + run `make migrate-up`
     # out-of-band.
     # Per-invocation MCP tool authorization: app layer injects the interceptor
@@ -318,24 +322,26 @@ def _prepend_dependencies(route: APIRoute, deps: list[Any]) -> int:
 def _add_cors_middleware(app: FastAPI, cors_config: CorsConfig | None) -> None:
     """Add CORS middleware with config or defaults.
 
-    When ``allow_origins`` is ``["*"]`` (the default), ``allow_credentials``
-    defaults to ``False`` because the combination of a wildcard origin with
-    credentials is insecure — it allows any site to make credentialed requests.
-    To enable ``allow_credentials``, specify concrete origins.
+    When ``allow_origin_regex`` is configured, ``allow_origins`` defaults to an
+    empty list so the regex is useful, and ``allow_credentials`` defaults to
+    ``False``. Without a regex, existing origin and credential defaults apply.
 
     Args:
         app: FastAPI application instance
         cors_config: CORS configuration dict or None for defaults
     """
     if cors_config:
-        origins = cors_config.get("allow_origins", ["*"])
+        allow_origin_regex = cors_config.get("allow_origin_regex")
+        has_origin_regex = allow_origin_regex is not None
+        origins = cors_config.get("allow_origins", [] if has_origin_regex else ["*"])
         credentials = cors_config.get(
             "allow_credentials",
-            origins not in (["*"], "*"),
+            False if has_origin_regex else origins not in (["*"], "*"),
         )
         app.add_middleware(
             CORSMiddleware,
             allow_origins=origins,
+            allow_origin_regex=allow_origin_regex,
             allow_credentials=credentials,
             allow_methods=cors_config.get("allow_methods", ["*"]),
             allow_headers=cors_config.get("allow_headers", ["*"]),

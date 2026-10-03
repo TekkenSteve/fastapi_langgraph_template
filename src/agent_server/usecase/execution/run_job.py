@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent_server.domain.runs import Durability
 from agent_server.domain.user import User
 
 if TYPE_CHECKING:
@@ -41,6 +42,8 @@ class RunExecution(BaseModel):
     stream_mode: str | list[str] | None = None
     checkpoint: dict[str, Any] | None = None
     command: dict[str, Any] | None = None
+    # Resolved at creation (run field, then server default); None keeps LangGraph's default.
+    durability: Durability | None = None
     # When true, stream via the native v3 protocol producer for Agent Protocol v2.
     event_streaming_v2: bool = False
 

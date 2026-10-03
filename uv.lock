@@ -64,7 +64,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.16.4" },
-    { name = "anyio", specifier = ">=4.7.0" },
+    { name = "anyio", specifier = ">=4.14.2" },
     { name = "asgi-correlation-id", specifier = ">=4.3.4" },
     { name = "asyncpg", specifier = ">=0.30.0" },
     { name = "croniter", specifier = ">=6.0.0" },
@@ -73,7 +73,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.110.1" },
     { name = "greenlet", specifier = ">=3.1.0" },
     { name = "langgraph", specifier = ">=1.0.3" },
-    { name = "langgraph-checkpoint-postgres", specifier = ">=2.0.23" },
+    { name = "langgraph-checkpoint-postgres", specifier = ">=3.1.1" },
     { name = "langgraph-sdk", specifier = ">=0.3.5" },
     { name = "limits", specifier = ">=5.8.0" },
     { name = "openinference-instrumentation-langchain", specifier = ">=0.1.58" },

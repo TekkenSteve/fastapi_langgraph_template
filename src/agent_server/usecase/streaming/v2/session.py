@@ -138,6 +138,9 @@ class ThreadEventSession:
         """
         broker = broker_manager.get_or_create_broker(run_id)
         seen: set[str] = set()
+        # Reset per run: a resumed run may reuse its predecessor's interrupt ID,
+        # and its input.requested event belongs to the new run.
+        self._sent_interrupts = set()
         self._current_graph = graph_name
         self._open_namespaces = {}
 

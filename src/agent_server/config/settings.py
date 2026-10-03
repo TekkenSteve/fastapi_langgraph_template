@@ -466,6 +466,18 @@ class ThreadTTLSettings(EnvBase):
     LANGGRAPH_THREAD_TTL: str | None = None
 
 
+class CheckpointerSettings(EnvBase):
+    """Server-wide checkpoint durability default.
+
+    CHECKPOINT_DURABILITY is one of sync, async or exit. When set it wins
+    over the langgraph.json checkpointer.durability key; a per-run durability
+    field wins over both. Validated in usecase.execution.run_preparation at
+    startup.
+    """
+
+    CHECKPOINT_DURABILITY: str | None = None
+
+
 class EventStreamingSettings(EnvBase):
     """Agent Protocol v2 event streaming (/threads/{id}/stream/events + /commands).
 
@@ -530,6 +542,7 @@ class Settings:
         self.worker = WorkerSettings()
         self.cron = CronSettings()
         self.thread_ttl = ThreadTTLSettings()
+        self.checkpointer = CheckpointerSettings()
         self.event_streaming = EventStreamingSettings()
         self.mcp = McpSettings()
         self.crypto = CryptoSettings()

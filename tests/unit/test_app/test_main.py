@@ -227,3 +227,32 @@ async def test_lifespan_skips_ttl_sweeper_without_config() -> None:
 
         mock_sweeper.start.assert_not_awaited()
         mock_sweeper.stop.assert_not_awaited()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_lifespan_fails_before_any_db_work_on_invalid_durability_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A typo in the durability default stops the boot instead of failing every run."""
+    main_module = importlib.import_module("agent_server.app.main")
+    from agent_server.usecase.execution import run_preparation
+
+    importlib.reload(main_module)
+    monkeypatch.setattr(run_preparation.settings.checkpointer, "CHECKPOINT_DURABILITY", "eventually")
+    run_preparation.get_default_durability.cache_clear()
+    try:
+        with (
+            patch("agent_server.app.main.run_migrations_async", new_callable=AsyncMock) as mock_migrations,
+            patch("agent_server.app.main.db_manager") as mock_db_manager,
+        ):
+            mock_db_manager.initialize = AsyncMock()
+
+            with pytest.raises(ValueError, match="CHECKPOINT_DURABILITY"):
+                async with main_module.lifespan(MagicMock()):
+                    pass
+
+            mock_migrations.assert_not_called()
+            mock_db_manager.initialize.assert_not_called()
+    finally:
+        run_preparation.get_default_durability.cache_clear()
