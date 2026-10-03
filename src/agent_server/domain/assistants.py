@@ -116,9 +116,15 @@ class AssistantSearchRequest(BaseModel):
 
 
 class AgentSchemas(BaseModel):
-    """Agent schema definitions for client integration"""
+    """Agent schema definitions for client integration.
 
-    input_schema: dict[str, Any] = Field(..., description="JSON Schema for agent inputs")
-    output_schema: dict[str, Any] = Field(..., description="JSON Schema for agent outputs")
-    state_schema: dict[str, Any] = Field(..., description="JSON Schema for agent state")
-    config_schema: dict[str, Any] = Field(..., description="JSON Schema for agent config")
+    Mirrors ``langgraph_sdk.schema.GraphSchema``. A schema the server could not
+    derive from the graph is ``null``.
+    """
+
+    graph_id: str = Field(..., description="Identifier of the graph these schemas describe.")
+    input_schema: dict[str, Any] | None = Field(..., description="JSON Schema for agent inputs")
+    output_schema: dict[str, Any] | None = Field(..., description="JSON Schema for agent outputs")
+    state_schema: dict[str, Any] | None = Field(..., description="JSON Schema for agent state")
+    config_schema: dict[str, Any] | None = Field(..., description="JSON Schema for agent config")
+    context_schema: dict[str, Any] | None = Field(..., description="JSON Schema for the graph's run context")

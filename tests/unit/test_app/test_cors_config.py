@@ -288,3 +288,87 @@ async def test_cors_credentials_explicit_override(isolated_module_reload: Path) 
     assert cors_middleware.kwargs.get("allow_credentials") is True, (
         "Explicit allow_credentials=True should override the wildcard default"
     )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cors_regex_only_defaults_to_empty_origins_and_no_credentials(isolated_module_reload: Path) -> None:
+    """A regex without an origin list must not fall back to the wildcard."""
+    tmp_path = isolated_module_reload
+
+    config_file = tmp_path / "langgraph.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "graphs": {"test": "./test.py:graph"},
+                "http": {"cors": {"allow_origin_regex": r"https://.*\.example\.com"}},
+            }
+        )
+    )
+
+    main = reload_main_module()
+
+    cors_middleware = find_cors_middleware(main.app)
+    assert cors_middleware is not None
+    assert cors_middleware.kwargs.get("allow_origins") == []
+    assert cors_middleware.kwargs.get("allow_origin_regex") == r"https://.*\.example\.com"
+    assert cors_middleware.kwargs.get("allow_credentials") is False
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cors_regex_and_explicit_origins_are_both_preserved(isolated_module_reload: Path) -> None:
+    """An explicit origin list and regex are passed together to Starlette."""
+    tmp_path = isolated_module_reload
+
+    config_file = tmp_path / "langgraph.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "graphs": {"test": "./test.py:graph"},
+                "http": {
+                    "cors": {
+                        "allow_origins": ["https://listed.example.com"],
+                        "allow_origin_regex": r"https://regex\.example\.com",
+                    }
+                },
+            }
+        )
+    )
+
+    main = reload_main_module()
+
+    cors_middleware = find_cors_middleware(main.app)
+    assert cors_middleware is not None
+    assert cors_middleware.kwargs.get("allow_origins") == ["https://listed.example.com"]
+    assert cors_middleware.kwargs.get("allow_origin_regex") == r"https://regex\.example\.com"
+    assert cors_middleware.kwargs.get("allow_credentials") is False
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cors_regex_credentials_explicit_override(isolated_module_reload: Path) -> None:
+    """With a regex, explicit allow_credentials=True still wins."""
+    tmp_path = isolated_module_reload
+
+    config_file = tmp_path / "langgraph.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "graphs": {"test": "./test.py:graph"},
+                "http": {
+                    "cors": {
+                        "allow_origins": ["https://listed.example.com"],
+                        "allow_origin_regex": r"https://regex\.example\.com",
+                        "allow_credentials": True,
+                    }
+                },
+            }
+        )
+    )
+
+    main = reload_main_module()
+
+    cors_middleware = find_cors_middleware(main.app)
+    assert cors_middleware is not None
+    assert cors_middleware.kwargs.get("allow_credentials") is True

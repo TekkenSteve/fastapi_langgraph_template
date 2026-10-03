@@ -727,6 +727,61 @@ class TestStreamGraphEvents:
             assert mock_filter.call_args[0][0] == context
 
 
+class TestStreamGraphEventsDurability:
+    """``durability`` reaches LangGraph on both the astream and astream_events paths."""
+
+    @staticmethod
+    def _graph(calls: list[dict]) -> object:
+        from unittest.mock import MagicMock
+
+        async def astream(*_args, **kwargs):
+            calls.append(kwargs)
+            yield ("values", {"foo": "bar"})
+
+        async def astream_events(*_args, **kwargs):
+            calls.append(kwargs)
+            yield {"event": "on_chain_start", "run_id": "other"}
+
+        graph = MagicMock()
+        graph.astream = astream
+        graph.astream_events = astream_events
+        return graph
+
+    @staticmethod
+    async def _drain(graph, stream_mode: list[str], durability) -> None:
+        from agent_server.usecase.streaming.graph_streaming import stream_graph_events
+
+        async for _ in stream_graph_events(
+            graph, {}, {"run_id": "test-run"}, stream_mode=stream_mode, durability=durability
+        ):
+            pass
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("mode", ["sync", "async", "exit"])
+    async def test_astream_receives_durability(self, mode: str) -> None:
+        calls: list[dict] = []
+        await self._drain(self._graph(calls), ["values"], mode)
+
+        assert calls[0]["durability"] == mode
+
+    @pytest.mark.asyncio
+    async def test_astream_events_receives_durability(self) -> None:
+        calls: list[dict] = []
+        await self._drain(self._graph(calls), ["values", "events"], "exit")
+
+        assert calls[0]["version"] == "v2"
+        assert calls[0]["durability"] == "exit"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stream_mode", [["values"], ["values", "events"]])
+    async def test_unset_durability_is_not_passed(self, stream_mode: list[str]) -> None:
+        """Runs that never asked for a mode keep calling LangGraph exactly as before."""
+        calls: list[dict] = []
+        await self._drain(self._graph(calls), stream_mode, None)
+
+        assert "durability" not in calls[0]
+
+
 class TestToMessageChunk:
     """Test _to_message_chunk function."""
 
