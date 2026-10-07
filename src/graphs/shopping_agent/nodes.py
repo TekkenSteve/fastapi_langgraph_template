@@ -60,9 +60,10 @@ def make_shop_node(tools: list) -> Callable[[State, Runtime[Context]], Coroutine
         )
         response = await model.ainvoke([SystemMessage(system), *state.messages])
 
-        # Last allowed step but the model still wants tools: answer gracefully
-        # instead of dying on the recursion limit.
-        if state.is_last_step and response.tool_calls:
+        # remaining_steps counts this step; a tool call needs two more (tools, then
+        # this node). Guarding on the last step alone misses odd recursion limits,
+        # where the tools node takes the last step and the run dies on the limit.
+        if state.remaining_steps < 3 and response.tool_calls:
             return {
                 "messages": [
                     AIMessage(

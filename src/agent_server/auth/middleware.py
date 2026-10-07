@@ -79,6 +79,8 @@ class LangGraphAuthBackend(AuthenticationBackend):
                 "Data is NOT isolated between users in this mode. "
                 "Configure 'auth.path' in langgraph.json before serving multiple users. "
                 "See the Authentication section in README.md. "
+                "The anonymous user carries is_authenticated=False, but the authenticate "
+                "handler is the only gate: return no user (or raise) to reject a request. "
             )
 
     def _load_auth_instance(self) -> Auth | None:
@@ -236,10 +238,14 @@ class LangGraphAuthBackend(AuthenticationBackend):
             logger.debug("No auth file configured, defaulting to noop (anonymous) authentication")
             # Return anonymous user when no auth is configured.
             # WARNING: all callers share this identity; no tenant isolation is enforced.
+            # is_authenticated=False marks this as not a signed-in user. It is
+            # informational for authorization handlers and custom routes: the
+            # authenticate handler is the only gate, so the server never rejects a
+            # request because of this flag.
             user_data: Auth.types.MinimalUserDict = {
                 "identity": "anonymous",
                 "display_name": "Anonymous User",
-                "is_authenticated": True,
+                "is_authenticated": False,
             }
             credentials = AuthCredentials([])
             user = LangGraphUser(user_data)

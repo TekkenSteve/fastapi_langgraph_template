@@ -11,7 +11,7 @@ from typing import Annotated, Any, Literal
 
 from langchain_core.messages import AnyMessage
 from langgraph.graph import add_messages
-from langgraph.managed import IsLastStep
+from langgraph.managed import RemainingSteps
 
 Intent = Literal["shop", "policy", "order", "chat"]
 
@@ -39,8 +39,8 @@ class State(InputState):
     # Latest cart snapshot (replace semantics), written by cart-mutating tools.
     # Frontends render a live cart panel from it.
     cart: dict[str, Any] = field(default_factory=dict)
-    # Managed by LangGraph (recursion_limit): True on the last allowed step.
-    is_last_step: IsLastStep = field(default=False)
+    # Managed by LangGraph (recursion_limit): steps left, counting this one.
+    remaining_steps: RemainingSteps = field(default=25)
 
 
 @dataclass(kw_only=True)

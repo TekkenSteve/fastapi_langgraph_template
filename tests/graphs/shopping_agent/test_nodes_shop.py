@@ -46,7 +46,8 @@ async def test_shop_graceful_exit_on_last_step(monkeypatch: pytest.MonkeyPatch) 
         "shopping_agent.nodes.load_chat_model_with_fallbacks", lambda name, _fallbacks=None: _FakeModel(response)
     )
     node = make_shop_node([])
-    state = State(messages=[HumanMessage(content="coffee?")], is_last_step=True)
+    # Fewer than three steps left: a tool call could not finish (tools, then model).
+    state = State(messages=[HumanMessage(content="coffee?")], remaining_steps=2)
     result = await node(state, _runtime())
 
     final = result["messages"][0]

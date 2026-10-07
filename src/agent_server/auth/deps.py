@@ -72,7 +72,7 @@ async def require_auth(request: Request) -> User:
         User object with authentication context including any extra fields
 
     Raises:
-        HTTPException: If user is not authenticated
+        HTTPException: If the auth handler rejects the request
     """
     cached = request.scope.get(_AUTH_RESULT_SCOPE_KEY)
     if cached is not None:
@@ -131,22 +131,21 @@ async def get_current_user(request: Request) -> User:
     allowing custom auth handlers to return extra fields (e.g., subscription_tier,
     team_id) that will be accessible on the User object.
 
+    ``is_authenticated`` is preserved but never checked here: the authenticate
+    handler is the only gate, so a handler that returns a guest user marked
+    ``is_authenticated=False`` still serves the request. To reject, raise from
+    the handler. Authorization handlers can branch on the flag.
+
     Args:
         request: FastAPI request object
 
     Returns:
         User object with authentication context including any extra fields
-
-    Raises:
-        HTTPException: If user is not authenticated
     """
     # Try reading from request.scope first (set by a require_auth that ran first)
     user = request.scope.get("user")
     if user is None:
         return await require_auth(request)
-
-    if hasattr(user, "is_authenticated") and not user.is_authenticated:
-        raise HTTPException(status_code=401, detail="Invalid authentication")
 
     # Convert to User model
     return _to_user_model(user)

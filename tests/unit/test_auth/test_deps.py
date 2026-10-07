@@ -3,8 +3,9 @@
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from fastapi import HTTPException, Request
-from starlette.authentication import AuthCredentials
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi.testclient import TestClient
+from starlette.authentication import AuthCredentials, AuthenticationError
 
 from agent_server.auth.deps import (
     AuthenticatedUser,
@@ -194,8 +195,8 @@ class TestGetCurrentUser:
 
         assert exc_info.value.status_code == 401
 
-    async def test_get_current_user_invalid_auth(self):
-        """Test get_current_user raises when is_authenticated is False"""
+    async def test_get_current_user_preserves_auth_state(self):
+        """Test get_current_user preserves is_authenticated when auth is informational"""
         user_data = {
             "identity": "user-123",
             "is_authenticated": False,
@@ -205,10 +206,55 @@ class TestGetCurrentUser:
         mock_request = Mock(spec=Request)
         mock_request.scope = {"user": langgraph_user}
 
-        with pytest.raises(HTTPException) as exc_info:
-            await get_current_user(mock_request)
+        user = await get_current_user(mock_request)
 
-        assert exc_info.value.status_code == 401
+        assert user.identity == "user-123"
+        assert user.is_authenticated is False
+
+
+class TestNoAuthMode:
+    """The authenticate handler is the only gate: is_authenticated never rejects."""
+
+    @staticmethod
+    def _app() -> FastAPI:
+        app = FastAPI()
+        router = APIRouter(dependencies=auth_dependency)
+
+        @router.get("/whoami")
+        async def whoami(user: User = Depends(get_current_user)) -> dict[str, object]:
+            return {"identity": user.identity, "is_authenticated": user.is_authenticated}
+
+        app.include_router(router)
+        return app
+
+    def test_noop_auth_server_still_serves_requests(self) -> None:
+        """No-auth mode should still satisfy protected router dependencies."""
+        backend = Mock()
+        anonymous_user = LangGraphUser(
+            {
+                "identity": "anonymous",
+                "display_name": "Anonymous User",
+                "is_authenticated": False,
+            }
+        )
+        backend.authenticate = AsyncMock(return_value=(AuthCredentials([]), anonymous_user))
+
+        with patch("agent_server.auth.deps.get_auth_backend", return_value=backend):
+            response = TestClient(self._app()).get("/whoami")
+
+        assert response.status_code == 200
+        assert response.json() == {"identity": "anonymous", "is_authenticated": False}
+
+    def test_auth_handler_exception_still_returns_401(self) -> None:
+        """Auth handler failures should still reject protected requests."""
+        backend = Mock()
+        backend.authenticate = AsyncMock(side_effect=AuthenticationError("Invalid token"))
+
+        with patch("agent_server.auth.deps.get_auth_backend", return_value=backend):
+            response = TestClient(self._app()).get("/whoami")
+
+        assert response.status_code == 401
+        assert response.json() == {"detail": "Invalid token"}
 
 
 class TestToUserModel:

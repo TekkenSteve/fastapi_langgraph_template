@@ -7,7 +7,7 @@ from typing import Annotated
 
 from langchain_core.messages import AnyMessage
 from langgraph.graph import add_messages
-from langgraph.managed import IsLastStep
+from langgraph.managed import RemainingSteps
 
 
 @dataclass
@@ -23,7 +23,7 @@ class State(InputState):
     # be staged; only changes staged this session may be applied/discarded.
     seen_listing_ids: Annotated[list[str], operator.add] = field(default_factory=list)
     staged_change_ids: Annotated[list[str], operator.add] = field(default_factory=list)
-    is_last_step: IsLastStep = field(default=False)
+    remaining_steps: RemainingSteps = field(default=25)
     # Per-turn analytics budget (resets each run; incremented by analytics_query).
     analytics_calls: int = 0
 
