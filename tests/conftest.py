@@ -4,6 +4,8 @@ This file contains shared fixtures and configuration that are available
 to all tests across the test suite.
 """
 
+import warnings
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -135,6 +137,26 @@ def clear_auth_cache():
     get_auth_backend.cache_clear()
 
 
+# --- TEST TIERS ---------------------------------------------------------------
+# `unit` / `integration` / `e2e` are derived from the directory a test lives in,
+# so `-m unit` and `-m integration` select what their names say. Hand-marking
+# thousands of tests would drift the moment someone adds a file; the directory
+# *is* the tier. `slow` stays a hand-written mark (see tests/README.md) because
+# only the author knows a test deliberately waits on a timeout.
+_TIER_BY_DIRECTORY = {"unit": "unit", "integration": "integration", "e2e": "e2e"}
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Tag every collected test with the marker its directory implies."""
+    for item in items:
+        parts = Path(str(item.path)).parts
+        if "tests" not in parts:
+            continue
+        tier = _TIER_BY_DIRECTORY.get(parts[parts.index("tests") + 1])
+        if tier:
+            item.add_marker(getattr(pytest.mark, tier))
+
+
 # --- AUTO-SKIP GEO-BLOCK FAILURES ---
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
@@ -186,6 +208,13 @@ def pytest_runtest_makereport(item, call):
 
         # Check if failure was caused by OpenAI block
         if any(sig in combined_text for sig in block_signatures):
+            # Never silent: a converted failure is still a test that did not
+            # pass, and a broad signature like "rate limit" can hide a real bug.
+            warnings.warn(
+                f"provider-block auto-skip: {item.nodeid} failed with a signature that looks like an "
+                "upstream block/quota error; the failure was reported as a skip",
+                stacklevel=1,
+            )
             rep.outcome = "skipped"
             # Must return a tuple for skip location
             file_path, line_no, _ = item.location

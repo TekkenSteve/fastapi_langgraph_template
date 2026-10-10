@@ -65,6 +65,7 @@ def local_broker_manager(monkeypatch: pytest.MonkeyPatch) -> BrokerManager:
 
 
 @pytest.mark.asyncio
+@pytest.mark.slow  # ~4s: waits out a real keepalive interval
 async def test_keepalive_pings_during_silent_broker(run_id: str, local_broker_manager: BrokerManager) -> None:
     """Silent brokers must still produce ping bytes so idle proxies don't drop us.
 

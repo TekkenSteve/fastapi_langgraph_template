@@ -38,7 +38,7 @@ tests/
 Always from the repo root, preferably through the Makefile:
 
 ```bash
-make test         # unit + integration
+make test         # unit + integration + graphs + shop + ml + hub
 make test-cov     # with coverage
 make e2e-dev      # e2e against a Docker dev stack (no Redis)
 make e2e-prod     # e2e against a Docker prod stack (Redis workers)
@@ -49,7 +49,10 @@ Direct pytest for tighter loops:
 
 ```bash
 uv run pytest tests/unit/test_usecase/test_run_executor.py -v
-uv run pytest -m "not slow"
+uv run pytest -m unit                          # the unit tier
+uv run pytest -m integration                   # the integration tier
+uv run pytest -m "not slow"                    # everything except known-slow tests
+uv run pytest tests/unit tests/graphs tests/shop tests/ml tests/hub -m "not slow"   # fast loop
 ```
 
 Notes:
@@ -58,11 +61,18 @@ Notes:
   migrations applied; it self-skips when the `assistant` table is missing.
 - pytest configuration lives in `pyproject.toml` (`[tool.pytest.ini_options]`) —
   `auth_only` tests are excluded by default via `-m "not auth_only"`.
+- A test that fails with output resembling an upstream provider block/quota error
+  is reported as a **skip** (see the auto-skip hook in `tests/conftest.py`), and
+  the conversion emits a warning so it never happens silently.
 
 ## Markers
 
-- `unit` / `integration` / `e2e` — test level
-- `slow` — takes > 1 second
+- `unit` / `integration` / `e2e` — derived from the test's directory by
+  `tests/conftest.py`, so `-m unit` and `-m integration` select exactly those
+  trees. Do not add them by hand; move or split the file instead.
+- `slow` — hand-marked: the test deliberately waits on something (a timeout, a
+  keepalive interval, a stream driven to completion). Add it when you write such
+  a test; `-m "not slow"` is the fast loop.
 - `prod_only` — requires Redis workers (skipped by `make e2e-dev`)
 - `auth_only` — requires the auth-enabled stack (run via `make e2e-auth`)
 

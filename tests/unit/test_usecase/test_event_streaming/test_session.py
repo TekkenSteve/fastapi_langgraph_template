@@ -376,6 +376,7 @@ class TestResumeAcrossRuns:
             {"question": "Second question?"},
         ]
 
+    @pytest.mark.slow  # ~5s: drives two streaming runs across one session
     async def test_followup_run_after_interrupt_streams_on_same_session(self, manager: BrokerManager) -> None:
         await _seed(
             manager,

@@ -34,7 +34,9 @@ def test_each_build_gets_a_fresh_sandbox(monkeypatch: pytest.MonkeyPatch) -> Non
     With the entry a load-time-compiled graph the backend (and, under
     SANDBOX_PROVIDER=monty, its file table) was reused by every run and user.
     """
-    monkeypatch.setenv("SANDBOX_PROVIDER", "monty")
+    import agent_server.contracts as contracts
+
+    monkeypatch.setattr(contracts.settings.sandbox, "SANDBOX_PROVIDER", "monty")
 
     from research_agent.agent import build_backend
 

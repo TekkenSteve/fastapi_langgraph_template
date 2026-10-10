@@ -104,6 +104,7 @@ def test_host_filesystem_is_denied(backend: MontySandboxBackend) -> None:
     assert result.exit_code == 1
 
 
+@pytest.mark.slow  # ~1s: the sandbox must actually hit its time limit
 def test_timeout_limit_kills_loops() -> None:
     backend = MontySandboxBackend(max_duration_secs=1.0)
     result = backend.execute("python -c 'while True: pass'")

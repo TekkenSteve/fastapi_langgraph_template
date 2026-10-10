@@ -99,7 +99,9 @@ async def test_hanging_server_times_out_not_stalls(monkeypatch) -> None:
     """A hung MCP handshake degrades within the load timeout."""
     import asyncio
 
-    monkeypatch.setenv("MCP_LOAD_TIMEOUT_SECS", "0.1")
+    # Patched through the loader's own settings reference: the timeout is a
+    # typed setting now, and an env var set after import no longer reaches it.
+    monkeypatch.setattr(loader.settings.mcp, "MCP_LOAD_TIMEOUT_SECS", 0.1)
 
     async def _hang(self):
         await asyncio.sleep(60)

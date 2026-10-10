@@ -167,6 +167,7 @@ class TestStreamRoute:
         resp = client.post("/threads/t1/stream/events", json={"channels": ["messages"]})
         assert resp.status_code == 404
 
+    @pytest.mark.slow  # ~30s: drives a real streaming session to completion
     def test_stream_emits_v2_frames(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A run on the thread streams content-block frames over SSE."""
         run_id = f"run-{uuid.uuid4().hex[:8]}"
