@@ -21,6 +21,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from agent_server.config.settings import settings
+from agent_server.repo.audit import record_audit_event
 from agent_server.repo.graphs.agent_middleware import register_agent_middleware
 from hub.api import public_router as hub_public_router
 from hub.api import router as hub_router
@@ -48,12 +49,17 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 # Server-side agent policy. Every composed graph picks these up; a deployment
 # adds its own (quotas, per-user hygiene) next to this line rather than editing
 # each graph.
+def _audit_log() -> AuditLogMiddleware:
+    """Server policy factory: log every tool call, and keep a durable copy."""
+    return AuditLogMiddleware(writer=record_audit_event if settings.agent.AUDIT_LOG_ENABLED else None)
+
+
 def _tool_output_offload() -> ToolOutputOffloadMiddleware:
     """Server policy factory: bound the model's context to the configured size."""
     return ToolOutputOffloadMiddleware(max_chars=settings.agent.TOOL_OUTPUT_MAX_CHARS)
 
 
-register_agent_middleware(AuditLogMiddleware)
+register_agent_middleware(_audit_log)
 register_agent_middleware(_tool_output_offload)
 
 app = FastAPI(title="Domain APIs", lifespan=lifespan)

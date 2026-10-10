@@ -21,6 +21,7 @@ from typing import Any
 import structlog
 from sqlalchemy import (
     TIMESTAMP,
+    BigInteger,
     Boolean,
     Float,
     ForeignKey,
@@ -231,6 +232,43 @@ class Run(Base):
         Index("idx_runs_assistant_id", "assistant_id"),
         Index("idx_runs_created_at", "created_at"),
         Index("idx_runs_lease_reaper", "status", "lease_expires_at"),
+    )
+
+
+class AuditLog(Base):
+    """Append-only ledger of agent actions (tool calls, and whatever else a
+    server middleware records).
+
+    Separate from structlog on purpose: logs answer "what is happening now" and
+    rotate away, while this table answers "what did this user's agent do last
+    week" — the question an incident review or a compliance check asks. Rows are
+    written best-effort by design (a ledger that can fail a run is worse than a
+    ledger with holes) and are never updated or deleted by application code.
+
+    ``detail`` must not carry credentials or full payloads: it holds the call's
+    arguments summary or the error text, sized by the writer.
+    """
+
+    __tablename__ = "audit_log"
+
+    # BIGSERIAL rather than uuid: this is an append-only log read in time order,
+    # so a monotonic key gives both cheap inserts and a stable cursor.
+    entry_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    thread_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    run_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    resource: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    detail: Mapped[dict | None] = mapped_column(JsonbSafe, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False)
+
+    __table_args__ = (
+        Index("idx_audit_log_user_created", "user_id", "created_at"),
+        Index("idx_audit_log_thread", "thread_id"),
+        Index("idx_audit_log_run", "run_id"),
+        Index("idx_audit_log_action_created", "action", "created_at"),
     )
 
 

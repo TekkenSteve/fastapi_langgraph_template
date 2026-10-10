@@ -164,6 +164,9 @@ EXEMPT_PATHS: Final[frozenset[str]] = frozenset(
         "/redoc",
         "/openapi.json",
         "/mcp/servers",
+        # audit ledger: identity via auth_dependency, admin gate via the policy
+        # engine (ownerless resource) — not @auth.on dispatch.
+        "/audit/logs",
         "/shop/products",  # public catalog
         "/shop/cart",  # identity via require_auth dependency, not @auth.on
         "/ml/predict",  # public inference demo

@@ -37,6 +37,7 @@ from agent_server.controller.http.middleware import (
     StructLogMiddleware,
 )
 from agent_server.controller.http.routers.assistants import router as assistants_router
+from agent_server.controller.http.routers.audit import router as audit_router
 from agent_server.controller.http.routers.crons import router as crons_router
 from agent_server.controller.http.routers.event_streaming import router as event_streaming_router
 from agent_server.controller.http.routers.health import router as health_router
@@ -69,6 +70,7 @@ OPENAPI_TAGS: list[dict[str, Any]] = [
     {"name": "Store", "description": "Persistent key-value and semantic storage available from any thread."},
     {"name": "Event Streaming", "description": "Agent Protocol v2 thread event streaming and commands."},
     {"name": "Health", "description": "Server health checks and service information."},
+    {"name": "Audit", "description": "Query the audit ledger of agent actions (admin only)."},
 ]
 
 setup_logging()
@@ -409,6 +411,7 @@ def _include_core_routers(app: FastAPI) -> None:
     app.include_router(crons_router, dependencies=[Depends(rate_limit_default)])
     app.include_router(store_router, dependencies=[Depends(rate_limit_default)])
     app.include_router(event_streaming_router, dependencies=[Depends(rate_limit_runs)])
+    app.include_router(audit_router, dependencies=[Depends(rate_limit_default)])
     if settings.app.ENV_MODE == "LOCAL":
         # Debug probe reveals internal topology — local/dev only.
         app.include_router(mcp_router)

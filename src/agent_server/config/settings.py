@@ -521,6 +521,9 @@ class AgentSettings(EnvBase):
     # ToolMessage.artifact (graphs/shared/middleware/tool_output_offload.py).
     # 0 disables the offload.
     TOOL_OUTPUT_MAX_CHARS: int = 50_000
+    # Append recorded tool calls to the audit ledger table (repo/audit.py).
+    # structlog always gets them; false only silences the durable copy.
+    AUDIT_LOG_ENABLED: bool = True
 
 
 class SandboxSettings(EnvBase):
