@@ -40,6 +40,7 @@ from langchain_core.tools import BaseTool
 
 from agent_server.config.graph_config import load_mcp_servers_config
 from agent_server.config.settings import settings
+from agent_server.domain.run_config import configurable_user_id
 from agent_server.infra.circuit_breaker import (
     CircuitBreaker,
     CircuitOpenError,
@@ -434,7 +435,7 @@ def with_mcp_tools(
     provider: ConnectionProvider = connection_provider
 
     async def user_factory(config: RunnableConfig) -> Any:
-        user_id = (config or {}).get("configurable", {}).get("user_id")
+        user_id = configurable_user_id(config)
         tools = await _load_user_scoped_tools(user_id, servers, provider)
         result = build(**{tools_param: tools})
         if inspect.isawaitable(result):

@@ -2,6 +2,7 @@
 
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -203,3 +204,49 @@ async def test_no_user_id_skips_loader() -> None:
         state = {"messages": [HumanMessage(content="web-research")]}
         await middleware.abefore_agent(state, None, {})
         assert not called
+
+
+async def test_loader_uses_the_server_injected_identity() -> None:
+    """A body-supplied configurable.user_id must not choose the loaded skills."""
+    seen: list[str] = []
+
+    async def loader(user_id: str) -> list[dict[str, Any]]:
+        seen.append(user_id)
+        return []
+
+    with tempfile.TemporaryDirectory() as tmp:
+        middleware = _hub_middleware(tmp, loader)
+        state = {"messages": [HumanMessage(content="hello")]}
+        await middleware.abefore_agent(
+            state,
+            None,
+            {"configurable": {"user_id": "victim", "langgraph_auth_user": SimpleNamespace(identity="real-user")}},
+        )
+
+    assert seen == ["real-user"]
+
+
+async def test_monty_backend_lists_materialized_user_skills() -> None:
+    """Regression: monty's ls omitted is_dir, so user skills were never listed."""
+    from shared.monty_sandbox import MontySandboxBackend
+
+    async def loader(user_id: str) -> list[dict[str, Any]]:
+        return [{"name": "coffee-brewing", "files": {"SKILL.md": _user_skill_md("coffee-brewing", "brew coffee")}}]
+
+    backend = CompositeBackend(
+        default=MontySandboxBackend(),
+        routes={"/skills/": FilesystemBackend(root_dir=SKILLS_DIR, virtual_mode=True)},
+    )
+    middleware = SkillRouterMiddleware(
+        backend=backend,
+        sources=[("/skills/", "Project")],
+        selector=_KeywordSelector(),
+        user_skills_loader=loader,
+    )
+
+    update = await middleware.abefore_agent(
+        {"messages": [HumanMessage(content="coffee-brewing please")]}, None, {"configurable": {"user_id": "u1"}}
+    )
+
+    names = {s["name"] for s in update["skills_metadata"]}
+    assert "coffee-brewing" in names

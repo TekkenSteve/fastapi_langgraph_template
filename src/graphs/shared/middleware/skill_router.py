@@ -37,6 +37,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.runtime import Runtime
 
+from agent_server.domain.run_config import configurable_user_id
 from shared.models import load_chat_model
 
 logger = structlog.getLogger(__name__)
@@ -143,7 +144,7 @@ class SkillRouterMiddleware(SkillsMiddleware):
 
     async def _materialize_user_skills(self, config: RunnableConfig) -> None:
         """Copy the caller's hub skills into the run's state filesystem."""
-        user_id = (config or {}).get("configurable", {}).get("user_id")
+        user_id = configurable_user_id(config)
         loader = self._user_skills_loader
         if not user_id or loader is None:
             return

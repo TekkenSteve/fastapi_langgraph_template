@@ -644,6 +644,10 @@ def inject_user_context(user: Any | None, base_config: dict[str, Any] | None = N
     subscription_tier, team_id, etc.) to the graph config under
     'langgraph_auth_user'.
 
+    The identity keys are *overwritten*, never defaulted: a client-supplied
+    ``configurable.user_id`` would otherwise let one tenant run as another
+    (skills, MCP connections and graph tools resolve the acting user here).
+
     Args:
         user: User object with identity and optional extra fields
         base_config: Base configuration to extend
@@ -654,12 +658,11 @@ def inject_user_context(user: Any | None, base_config: dict[str, Any] | None = N
     config: dict[str, Any] = (base_config or {}).copy()
     config["configurable"] = config.get("configurable", {})
 
-    # All user-related data injection (only if user exists)
+    # Server-authoritative identity (only if a user exists); overwrite any
+    # client-supplied copy instead of honoring it.
     if user:
-        # Basic user identity for multi-tenant scoping
-        config["configurable"].setdefault("user_id", user.identity)
-        config["configurable"].setdefault("user_display_name", getattr(user, "display_name", None) or user.identity)
-
+        config["configurable"]["user_id"] = user.identity
+        config["configurable"]["user_display_name"] = getattr(user, "display_name", None) or user.identity
         config["configurable"]["langgraph_auth_user"] = user
 
     return config

@@ -1075,3 +1075,81 @@ class TestCreateRunDurability:
         )
 
         assert resp.status_code == 422
+
+
+class TestRunConfigIdentityPinning:
+    """The caller's identity is server-authoritative: a body-supplied config cannot claim another user."""
+
+    @staticmethod
+    def _create_run(config: dict[str, Any], context: dict[str, Any] | None = None) -> tuple[Any, MagicMock]:
+        app = create_test_app(include_runs=True, include_threads=False)
+        thread = _thread_row()
+        assistant = _assistant_row()
+
+        class Session(DummySessionBase):
+            async def scalar(self, stmt: Any) -> Any:
+                stmt_str = str(stmt).lower()
+                if "from thread" in stmt_str:
+                    return thread
+                if "from assistant" in stmt_str:
+                    return assistant
+                return None
+
+            def add(self, _obj: Any) -> None:
+                pass
+
+            async def execute(self, _stmt: Any) -> Any:
+                return MagicMock(rowcount=1)
+
+        override_session_dependency(app, Session)
+        client = make_client(app)
+        mock_executor = MagicMock()
+        mock_executor.submit = AsyncMock(return_value=None)
+
+        with (
+            patch("agent_server.usecase.execution.run_preparation.executor", mock_executor),
+            patch("agent_server.usecase.execution.run_preparation.get_langgraph_service") as mock_service,
+        ):
+            mock_service.return_value.list_graphs.return_value = ["test-graph"]
+            resp = client.post(
+                "/threads/test-thread-123/runs",
+                json={
+                    "assistant_id": "test-assistant-123",
+                    "input": {"message": "test"},
+                    "config": config,
+                    "context": context if context is not None else {},
+                },
+            )
+        return resp, mock_executor
+
+    def test_client_identity_keys_never_reach_the_job(self) -> None:
+        resp, mock_executor = self._create_run(
+            {
+                "configurable": {
+                    "user_id": "victim",
+                    "user_display_name": "Victim",
+                    "langgraph_auth_user": {"identity": "victim"},
+                    "thread_id": "other-thread",
+                    "run_id": "other-run",
+                    "temperature": 0.5,
+                }
+            },
+            context={"user_id": "victim", "langgraph_auth_user": {"identity": "victim"}, "locale": "zh"},
+        )
+
+        assert resp.status_code == 200
+        submitted = mock_executor.submit.await_args.args[0]
+        configurable = submitted.execution.config["configurable"]
+
+        assert "user_id" not in configurable
+        assert "user_display_name" not in configurable
+        assert "langgraph_auth_user" not in configurable
+        assert "thread_id" not in configurable
+        assert "run_id" not in configurable
+        # Legitimate client keys survive.
+        assert configurable["temperature"] == 0.5
+
+        context = submitted.execution.context
+        assert "user_id" not in context
+        assert "langgraph_auth_user" not in context
+        assert context["locale"] == "zh"

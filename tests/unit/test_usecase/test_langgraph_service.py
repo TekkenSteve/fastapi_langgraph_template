@@ -572,6 +572,30 @@ class TestLangGraphServiceContext:
         assert result["configurable"]["existing_key"] == "existing_value"
         assert result["configurable"]["user_id"] == "user-123"
 
+    def test_inject_user_context_overwrites_a_client_supplied_identity(self):
+        """The authenticated identity is authoritative, never merely a default.
+
+        A client-supplied configurable.user_id lets a run act as another tenant
+        (skills, MCP connections and graph tools resolve the acting user here).
+        """
+        mock_user = Mock()
+        mock_user.identity = "real-user"
+        mock_user.display_name = "Real User"
+
+        base_config = {
+            "configurable": {
+                "user_id": "victim",
+                "user_display_name": "Victim",
+                "langgraph_auth_user": {"identity": "victim"},
+            }
+        }
+
+        result = inject_user_context(mock_user, base_config)
+
+        assert result["configurable"]["user_id"] == "real-user"
+        assert result["configurable"]["user_display_name"] == "Real User"
+        assert result["configurable"]["langgraph_auth_user"] is mock_user
+
 
 class TestLangGraphServiceConfigs:
     """Test thread and run config creation"""

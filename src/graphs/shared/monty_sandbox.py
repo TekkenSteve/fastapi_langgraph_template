@@ -29,10 +29,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from deepagents.backends.protocol import (
+    FILE_NOT_FOUND,
+    IS_DIRECTORY,
     DeleteResult,
     EditResult,
     ExecuteResponse,
+    FileDownloadResponse,
     FileInfo,
+    FileUploadResponse,
     GlobResult,
     GrepMatch,
     GrepResult,
@@ -80,11 +84,56 @@ class MontySandboxBackend(SandboxBackendProtocol):
         )
 
     def ls(self, path: str) -> LsResult:
+        """List the direct children of *path*, marking directories.
+
+        deepagents' skill loader only counts entries whose ``is_dir`` is truthy,
+        so a listing that omitted directories (the file table has no directory
+        rows) made every skill under ``/user-skills/`` invisible.
+        """
         prefix = path.rstrip("/") + "/"
-        entries: list[FileInfo] = [
-            {"path": p} for p in sorted(self._files) if p.startswith(prefix) and "/" not in p[len(prefix) :]
-        ]
+        children: dict[str, bool] = {}
+        for file_path in self._files:
+            if not file_path.startswith(prefix):
+                continue
+            rest = file_path[len(prefix) :]
+            if not rest:
+                continue
+            head, sep, _tail = rest.partition("/")
+            child = prefix + head
+            children[child] = children.get(child, False) or bool(sep)
+        entries: list[FileInfo] = [{"path": child, "is_dir": is_dir} for child, is_dir in sorted(children.items())]
         return LsResult(entries=entries)
+
+    def _is_dir(self, path: str) -> bool:
+        """True when any stored file lives under *path* (the table has no dir rows)."""
+        prefix = path.rstrip("/") + "/"
+        return any(file_path.startswith(prefix) for file_path in self._files)
+
+    def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        """Batch read — deepagents' skill loader reads SKILL.md through this."""
+        responses: list[FileDownloadResponse] = []
+        for path in paths:
+            content = self._files.get(path)
+            if content is not None:
+                responses.append(FileDownloadResponse(path=path, content=content.encode("utf-8")))
+            elif self._is_dir(path):
+                responses.append(FileDownloadResponse(path=path, error=IS_DIRECTORY))
+            else:
+                responses.append(FileDownloadResponse(path=path, error=FILE_NOT_FOUND))
+        return responses
+
+    def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+        """Batch write; the virtual FS stores UTF-8 text only."""
+        responses: list[FileUploadResponse] = []
+        for path, content in files:
+            try:
+                text = content.decode("utf-8")
+            except UnicodeDecodeError:
+                responses.append(FileUploadResponse(path=path, error="content must be UTF-8 text"))
+                continue
+            self._files[path] = text
+            responses.append(FileUploadResponse(path=path))
+        return responses
 
     def edit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:  # noqa: FBT001, FBT002
         content = self._files.get(file_path)

@@ -26,6 +26,35 @@ def test_virtual_fs_round_trip(backend: MontySandboxBackend) -> None:
     assert backend.read("/nope.txt").error is not None
 
 
+def test_ls_marks_directories_so_skill_sources_resolve(backend: MontySandboxBackend) -> None:
+    """deepagents' skill loader only counts entries whose ``is_dir`` is truthy.
+
+    The file table has no directory rows, so directories must be derived from
+    nested paths — otherwise every skill under ``/user-skills/`` is invisible.
+    """
+    backend.write("/user-skills/alpha/SKILL.md", "---\nname: alpha\ndescription: a\n---\n")
+    backend.write("/user-skills/beta/SKILL.md", "---\nname: beta\ndescription: b\n---\n")
+    backend.write("/user-skills/notes.txt", "top-level file")
+
+    entries = {e["path"]: e for e in backend.ls("/user-skills").entries}
+
+    assert entries["/user-skills/alpha"]["is_dir"] is True
+    assert entries["/user-skills/beta"]["is_dir"] is True
+    assert entries["/user-skills/notes.txt"]["is_dir"] is False
+    # Nested files are children of the skill dir, not of this level.
+    assert "/user-skills/alpha/SKILL.md" not in entries
+
+
+def test_ls_of_root_and_missing_path(backend: MontySandboxBackend) -> None:
+    backend.write("/a.txt", "a")
+    backend.write("/nested/b.txt", "b")
+
+    root = {e["path"]: e["is_dir"] for e in backend.ls("/").entries}
+
+    assert root == {"/a.txt": False, "/nested": True}
+    assert backend.ls("/missing").entries == []
+
+
 def test_grep_and_glob(backend: MontySandboxBackend) -> None:
     backend.write("/a.py", "import os\nprint(1)")
     backend.write("/b.txt", "nothing here")

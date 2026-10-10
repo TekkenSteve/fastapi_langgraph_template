@@ -21,6 +21,7 @@ from agent_server.config.graph_config import load_checkpointer_config
 from agent_server.config.settings import settings
 from agent_server.domain import Run, RunCreate, User
 from agent_server.domain.assistant_ids import resolve_assistant_id
+from agent_server.domain.run_config import SERVER_PINNED_IDENTITY_KEYS, strip_pinned_config_keys
 from agent_server.domain.runs import Durability
 from agent_server.repo.graphs.langgraph_service import get_langgraph_service
 from agent_server.repo.jsonb import jsonb_patch, jsonb_shallow_merge
@@ -278,12 +279,20 @@ async def _prepare_run(
     available_graphs = langgraph_service.list_graphs()
     resolved_assistant_id = resolve_assistant_id(requested_id, available_graphs)
 
-    # Config / context merging
-    config = request.config or {}
-    context = request.context or {}
+    # Config / context merging.
+    #
+    # Identity (user_id / langgraph_auth_user) and routing (thread_id / run_id)
+    # keys are server-authoritative: drop any client-supplied copy here so a
+    # run cannot claim another user's identity — skills, MCP connections and
+    # graph tools all resolve the acting user from this config — and a
+    # body-supplied thread_id/run_id cannot redirect execution.
+    config = strip_pinned_config_keys(request.config or {})
+    context = strip_pinned_config_keys(request.context or {}, keys=SERVER_PINNED_IDENTITY_KEYS)
     configurable = config.get("configurable", {})
     if not isinstance(configurable, dict):
         raise HTTPException(status_code=422, detail="`config.configurable` must be a mapping")
+    configurable = strip_pinned_config_keys(configurable)
+    config = {**config, "configurable": configurable}
 
     if not context:
         context = configurable.copy()
@@ -297,7 +306,11 @@ async def _prepare_run(
         raise HTTPException(404, f"Assistant '{request.assistant_id}' not found")
 
     config = _merge_jsonb(assistant.config, config)
-    context = _merge_jsonb(assistant.context, context)
+    # The assistant config/context are caller-owned too; re-apply after merge.
+    merged_configurable = config.get("configurable")
+    if isinstance(merged_configurable, dict):
+        config = {**config, "configurable": strip_pinned_config_keys(merged_configurable)}
+    context = strip_pinned_config_keys(_merge_jsonb(assistant.context, context), keys=SERVER_PINNED_IDENTITY_KEYS)
 
     # Validate the assistant's graph exists
     available_graphs = langgraph_service.list_graphs()
