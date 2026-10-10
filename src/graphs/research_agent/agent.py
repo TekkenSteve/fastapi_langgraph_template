@@ -15,7 +15,6 @@ scratch space under ``/user-skills/`` by SkillRouterMiddleware.
 """
 
 import operator
-import os
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated, Any, NotRequired, cast
@@ -28,7 +27,7 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
 
-from agent_server.contracts import compose_middleware
+from agent_server.contracts import compose_middleware, sandbox_provider
 from hub.queries import load_user_skill_contents
 from research_agent.prompts import RESEARCH_SYSTEM_PROMPT
 from research_agent.subagents import SUBAGENTS
@@ -57,7 +56,7 @@ def build_backend() -> CompositeBackend:
     execute tool appears; unset keeps everything ephemeral and inert.
     """
     skills_backend = FilesystemBackend(root_dir=SKILLS_DIR, virtual_mode=True)
-    sandbox = make_sandbox_backend(os.environ.get("SANDBOX_PROVIDER", ""))
+    sandbox = make_sandbox_backend(sandbox_provider())
     return CompositeBackend(
         default=sandbox or StateBackend(),
         routes={"/skills/": skills_backend},

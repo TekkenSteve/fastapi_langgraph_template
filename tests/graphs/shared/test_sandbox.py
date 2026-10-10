@@ -46,10 +46,17 @@ def test_local_execute_runs_commands() -> None:
 
 
 def test_research_agent_backend_switches_with_sandbox_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The tier comes from typed settings (settings.sandbox), not a raw env read.
+
+    Patched through ``contracts``' own settings reference: tests that reload the
+    settings module (test_main) leave every import-bound copy pointing at the
+    previous instance, so the module a caller actually reads is the one to patch.
+    """
+    import agent_server.contracts as contracts
     from research_agent.agent import build_backend
 
-    monkeypatch.delenv("SANDBOX_PROVIDER", raising=False)
+    monkeypatch.setattr(contracts.settings.sandbox, "SANDBOX_PROVIDER", "")
     assert isinstance(build_backend().default, StateBackend)
 
-    monkeypatch.setenv("SANDBOX_PROVIDER", "local")
+    monkeypatch.setattr(contracts.settings.sandbox, "SANDBOX_PROVIDER", "local")
     assert isinstance(build_backend().default, LocalShellBackend)

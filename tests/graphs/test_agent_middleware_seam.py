@@ -8,6 +8,7 @@ without the seam.
 """
 
 import ast
+import importlib
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -73,10 +74,16 @@ def test_every_composed_agent_composes_server_middleware() -> None:
 
 
 def test_the_shipped_app_registers_its_policy() -> None:
-    """The composition root is where deployments add their own policy."""
-    import http_app  # noqa: F401 — importing it runs the wiring under test
+    """The composition root is where deployments add their own policy.
 
-    assert server_middleware(), "the composed app must register server middleware"
+    Reloaded rather than imported: another test may already have imported the
+    module, and this test just cleared the registry — what matters is that
+    executing the module wires the policy.
+    """
+    import http_app
+
+    importlib.reload(http_app)
 
     instances: list[Any] = server_middleware()
+    assert instances, "the composed app must register server middleware"
     assert any(isinstance(instance, AuditLogMiddleware) for instance in instances)

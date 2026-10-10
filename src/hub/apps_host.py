@@ -21,7 +21,6 @@ the caller's own row and run the policy engine before handing it over.
 """
 
 import asyncio
-import os
 from typing import Any, cast
 
 import structlog
@@ -80,8 +79,8 @@ async def _run_guarded(connection: McpConnectionORM, operation: Any) -> Any:
 
 
 def _timeout() -> float:
-    """Bound host proxy operations (same env as graph-side loads)."""
-    return float(os.environ.get("MCP_LOAD_TIMEOUT_SECS", "15"))
+    """Bound host proxy operations (same setting as graph-side loads)."""
+    return settings.mcp.MCP_LOAD_TIMEOUT_SECS
 
 
 async def list_tools(connection: McpConnectionORM) -> list[dict[str, Any]]:

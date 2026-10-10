@@ -1,5 +1,7 @@
 """Tests for environment-backed settings models."""
 
+import ast
+from pathlib import Path
 from urllib.parse import quote_plus
 
 import pytest
@@ -688,3 +690,69 @@ class TestMaxSearchLimit:
         monkeypatch.setenv("MAX_SEARCH_LIMIT", "-1")
         with pytest.raises(ValidationError):
             AppSettings(_env_file=None)
+
+
+class TestNoStrayEnvironmentReads:
+    """Every runtime knob goes through a typed settings group.
+
+    A raw ``os.environ`` read is a knob nothing documents, validates, or shows
+    in ``.env.example`` — the class of drift that left ``SANDBOX_PROVIDER`` and
+    ``MCP_LOAD_TIMEOUT_SECS`` invisible. This scan keeps them from creeping back.
+    """
+
+    _SOURCE_ROOTS = ("agent_server", "graphs", "hub")
+    # The MCP registry prefix is dynamic by design: MCP_SERVER__<NAME> carries a
+    # per-server connection object, so it cannot be a fixed settings field.
+    _DYNAMIC_PREFIX = "MCP_SERVER__"
+
+    @staticmethod
+    def _source_files() -> list[Path]:
+        src = Path(__file__).resolve().parents[3] / "src"
+        return [p for root in TestNoStrayEnvironmentReads._SOURCE_ROOTS for p in (src / root).rglob("*.py")]
+
+    def test_no_literal_environment_reads_outside_settings(self) -> None:
+        offenders: list[str] = []
+        for path in self._source_files():
+            tree = ast.parse(path.read_text(), filename=str(path))
+            for node in ast.walk(tree):
+                keys = self._literal_environ_keys(node)
+                offenders.extend(f"{path.name}: os.environ[{key!r}]" for key in keys)
+        assert offenders == [], f"read these through a typed settings group instead: {offenders}"
+
+    def test_only_the_registry_prefix_scans_the_environment(self) -> None:
+        scanners = [
+            path.name
+            for path in self._source_files()
+            if self._references_environ(path) and self._DYNAMIC_PREFIX not in path.read_text()
+        ]
+        assert scanners == [], f"{scanners} read os.environ without an explicit prefix"
+
+    @staticmethod
+    def _is_environ(node: ast.AST) -> bool:
+        return (
+            isinstance(node, ast.Attribute)
+            and node.attr == "environ"
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "os"
+        )
+
+    @staticmethod
+    def _references_environ(path: Path) -> bool:
+        """True for a real ``os.environ`` reference (a docstring mention is not one)."""
+        tree = ast.parse(path.read_text(), filename=str(path))
+        return any(TestNoStrayEnvironmentReads._is_environ(node) for node in ast.walk(tree))
+
+    @staticmethod
+    def _literal_environ_keys(node: ast.AST) -> list[str]:
+        """Env keys named literally in ``os.environ.get('X')`` / ``os.environ['X']``."""
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get":
+            if not TestNoStrayEnvironmentReads._is_environ(node.func.value):
+                return []
+            key = node.args[0] if node.args else None
+        elif isinstance(node, ast.Subscript) and TestNoStrayEnvironmentReads._is_environ(node.value):
+            key = node.slice
+        else:
+            return []
+        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+            return [key.value]
+        return []

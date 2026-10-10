@@ -37,7 +37,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.runtime import Runtime
 
-from agent_server.domain.run_config import configurable_user_id
+from agent_server.contracts import configurable_user_id
 from shared.models import load_chat_model
 
 logger = structlog.getLogger(__name__)

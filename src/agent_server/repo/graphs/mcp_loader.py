@@ -418,7 +418,7 @@ async def load_mcp_tools(
     """
     if not connections:
         return []
-    timeout = float(os.environ.get("MCP_LOAD_TIMEOUT_SECS", "15"))
+    timeout = settings.mcp.MCP_LOAD_TIMEOUT_SECS
 
     async def _guarded_load(name: str, conn: Any) -> list[BaseTool]:
         return await mcp_breaker(name, conn).call(_load_server_tools, name, conn, timeout, interceptors)

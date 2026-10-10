@@ -494,6 +494,12 @@ class EventStreamingSettings(EnvBase):
 class McpSettings(EnvBase):
     """MCP tool loading knobs (repo/graphs/mcp_loader.py)."""
 
+    # Handshake budget for one server, shared by graph-side loads and the hub's
+    # MCP Apps host proxy — one number, so both degrade alike.
+    MCP_LOAD_TIMEOUT_SECS: float = 15.0
+    # Process-local TTL for loaded tool lists. The cache key is the connection
+    # spec fingerprint, so an edited URL/header/env takes effect immediately;
+    # this TTL bounds what the spec cannot show and the cross-pod window.
     MCP_USER_TOOLS_CACHE_TTL_SECS: float = 60.0
     # Per-server circuit breaker: after this many consecutive handshake
     # failures, skip the server for the cooldown window.
@@ -506,6 +512,14 @@ class McpSettings(EnvBase):
     # (auth/tool_authz.py). Fail-closed: LocalPolicyEngine denies ownerless
     # tool resources — enable this with a real policy backend configured.
     MCP_TOOL_AUTHZ_ENABLED: bool = False
+
+
+class SandboxSettings(EnvBase):
+    """Skill-script execution bridge (graphs/shared/sandbox.py)."""
+
+    # empty = off (scripts stay inert text), monty = in-process Python,
+    # local = on the pod (dev only, no isolation), daytona|e2b = remote.
+    SANDBOX_PROVIDER: str = ""
 
 
 class CryptoSettings(EnvBase):
@@ -545,6 +559,7 @@ class Settings:
         self.checkpointer = CheckpointerSettings()
         self.event_streaming = EventStreamingSettings()
         self.mcp = McpSettings()
+        self.sandbox = SandboxSettings()
         self.crypto = CryptoSettings()
         self.policy = PolicySettings()
 
