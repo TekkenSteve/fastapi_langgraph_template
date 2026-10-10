@@ -73,6 +73,23 @@ def test_every_composed_agent_composes_server_middleware() -> None:
         )
 
 
+def test_reloading_the_app_does_not_stack_policy() -> None:
+    """Re-registering the same policy must not duplicate it.
+
+    Reloading an app module produces new function objects for the same policy;
+    the agent builder rejects a duplicated middleware list outright, so the
+    registry keys on module + qualified name instead of object identity.
+    """
+    import http_app
+
+    importlib.reload(http_app)
+    importlib.reload(http_app)
+
+    names = [type(instance).__name__ for instance in server_middleware()]
+
+    assert len(names) == len(set(names)), names
+
+
 def test_the_shipped_app_registers_its_policy() -> None:
     """The composition root is where deployments add their own policy.
 

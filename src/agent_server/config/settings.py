@@ -514,6 +514,15 @@ class McpSettings(EnvBase):
     MCP_TOOL_AUTHZ_ENABLED: bool = False
 
 
+class AgentSettings(EnvBase):
+    """Composed-agent runtime policy (server-injected middleware)."""
+
+    # Tool output above this many characters moves out of the model context into
+    # ToolMessage.artifact (graphs/shared/middleware/tool_output_offload.py).
+    # 0 disables the offload.
+    TOOL_OUTPUT_MAX_CHARS: int = 50_000
+
+
 class SandboxSettings(EnvBase):
     """Skill-script execution bridge (graphs/shared/sandbox.py)."""
 
@@ -559,6 +568,7 @@ class Settings:
         self.checkpointer = CheckpointerSettings()
         self.event_streaming = EventStreamingSettings()
         self.mcp = McpSettings()
+        self.agent = AgentSettings()
         self.sandbox = SandboxSettings()
         self.crypto = CryptoSettings()
         self.policy = PolicySettings()

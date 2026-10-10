@@ -29,29 +29,52 @@ logger = structlog.getLogger(__name__)
 # A factory returns a fresh AgentMiddleware instance for one graph build.
 MiddlewareFactory = Callable[[], Any]
 
-_registry: list[MiddlewareFactory] = []
+_registry: list[str] = []
+_factories: dict[str, MiddlewareFactory] = {}
+
+
+def _factory_key(factory: MiddlewareFactory) -> str:
+    """A stable identity for a factory, surviving module reloads.
+
+    Object identity is not enough: reloading the module that registers a
+    middleware produces a *new* function object for the same policy, and the
+    stack would grow a duplicate on every reload — which the agent builder
+    rejects outright ("duplicate middleware instances"). Module plus qualified
+    name is what stays constant across a reload; anonymous factories keep
+    identity so distinct lambdas stay distinct.
+    """
+    module = getattr(factory, "__module__", "?")
+    name = getattr(factory, "__qualname__", "")
+    if not name or name.endswith("<lambda>"):
+        # Anonymous: identity is all we have. Collapsing distinct lambdas into
+        # one entry would silently drop policy, so they never dedupe.
+        return f"{module}.<anonymous>@{id(factory)}"
+    return f"{module}.{name}"
 
 
 def register_agent_middleware(factory: MiddlewareFactory) -> None:
     """Add a middleware factory to the server policy stack (idempotent).
 
-    Idempotent by identity so a module reload or a second ``create_app()`` in
-    one process cannot stack the same policy twice.
+    Idempotent by :func:`_factory_key`, so a module reload or a second
+    ``create_app()`` in one process cannot stack the same policy twice.
     """
-    if any(existing is factory for existing in _registry):
+    key = _factory_key(factory)
+    if any(existing == key for existing in _registry):
         return
-    _registry.append(factory)
-    logger.info("agent_middleware_registered", factory=getattr(factory, "__name__", repr(factory)))
+    _registry.append(key)
+    _factories[key] = factory
+    logger.info("agent_middleware_registered", factory=key)
 
 
 def clear_agent_middleware() -> None:
     """Drop every registered factory (tests; not needed at runtime)."""
     _registry.clear()
+    _factories.clear()
 
 
 def server_middleware() -> list[Any]:
     """Fresh instances from every registered factory, in registration order."""
-    return [factory() for factory in _registry]
+    return [_factories[key]() for key in _registry]
 
 
 def compose_middleware(*graph_middleware: Any) -> list[Any]:

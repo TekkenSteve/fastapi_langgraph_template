@@ -28,6 +28,7 @@ from hub.migrate import run_hub_migrations_if_needed
 from ml import service as ml_service
 from ml.api import router as ml_router
 from shared.middleware.audit_log import AuditLogMiddleware
+from shared.middleware.tool_output_offload import ToolOutputOffloadMiddleware
 from shop.api import router as shop_router
 
 
@@ -47,7 +48,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 # Server-side agent policy. Every composed graph picks these up; a deployment
 # adds its own (quotas, per-user hygiene) next to this line rather than editing
 # each graph.
+def _tool_output_offload() -> ToolOutputOffloadMiddleware:
+    """Server policy factory: bound the model's context to the configured size."""
+    return ToolOutputOffloadMiddleware(max_chars=settings.agent.TOOL_OUTPUT_MAX_CHARS)
+
+
 register_agent_middleware(AuditLogMiddleware)
+register_agent_middleware(_tool_output_offload)
 
 app = FastAPI(title="Domain APIs", lifespan=lifespan)
 
