@@ -7,6 +7,11 @@ surfaces stay in their packages (src/<domain>/api.py); this file only wires.
 The lifespan chains domain lifecycles (hub business-schema migrations, ML
 model load/unload) with the server's own — route_merger combines them, so
 the framework schema always migrates before this runs.
+
+It is also the composition root for *server-side agent policy*: middleware
+registered here is composed into every graph that builds a composed agent
+(``agent_server.contracts.compose_middleware``). Registering is explicit on
+purpose — there are no entry-point plugins, so what runs is visible here.
 """
 
 import asyncio
@@ -16,11 +21,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from agent_server.config.settings import settings
+from agent_server.repo.graphs.agent_middleware import register_agent_middleware
 from hub.api import public_router as hub_public_router
 from hub.api import router as hub_router
 from hub.migrate import run_hub_migrations_if_needed
 from ml import service as ml_service
 from ml.api import router as ml_router
+from shared.middleware.audit_log import AuditLogMiddleware
 from shop.api import router as shop_router
 
 
@@ -36,6 +43,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
     ml_service.unload_model()
 
+
+# Server-side agent policy. Every composed graph picks these up; a deployment
+# adds its own (quotas, per-user hygiene) next to this line rather than editing
+# each graph.
+register_agent_middleware(AuditLogMiddleware)
 
 app = FastAPI(title="Domain APIs", lifespan=lifespan)
 

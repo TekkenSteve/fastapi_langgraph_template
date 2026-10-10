@@ -9,6 +9,13 @@ loaders) are imported by graphs from their own packages directly — same
 pattern as graphs importing ``shop.backends``.
 """
 
+from agent_server.domain.run_config import configurable_user_id
+from agent_server.repo.graphs.agent_middleware import compose_middleware, server_middleware
 from agent_server.repo.graphs.mcp_loader import with_mcp_tools
 
-__all__ = ["with_mcp_tools"]
+__all__ = [
+    "compose_middleware",
+    "configurable_user_id",
+    "server_middleware",
+    "with_mcp_tools",
+]

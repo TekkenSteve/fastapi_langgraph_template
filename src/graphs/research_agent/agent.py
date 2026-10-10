@@ -28,11 +28,11 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
 
+from agent_server.contracts import compose_middleware
 from hub.queries import load_user_skill_contents
 from research_agent.prompts import RESEARCH_SYSTEM_PROMPT
 from research_agent.subagents import SUBAGENTS
 from research_agent.tools import make_plan_tool, think_tool
-from shared.middleware.audit_log import AuditLogMiddleware
 from shared.middleware.skill_router import LLMSkillSelector, SkillRouterMiddleware
 from shared.sandbox import make_sandbox_backend
 from shared.tools.web_search import web_search
@@ -87,10 +87,11 @@ def build_research_agent(mcp_tools: Sequence[BaseTool] = (), model: str = DEFAUL
         tools=[web_search, think_tool, make_plan_tool(), *mcp_tools],
         system_prompt=RESEARCH_SYSTEM_PROMPT,
         subagents=SUBAGENTS,
-        # Our SkillRouterMiddleware widens abefore_agent to dict (same
-        # contravariance its parent suppresses) — cast at the deepagents
-        # boundary.
-        middleware=[AuditLogMiddleware(), cast("AgentMiddleware[Any, None, Any]", skills)],
+        # Server middleware (audit, and whatever the deployment registers) comes
+        # from the seam, then ours. Our SkillRouterMiddleware widens
+        # abefore_agent to dict (same contravariance its parent suppresses) —
+        # cast at the deepagents boundary.
+        middleware=compose_middleware(cast("AgentMiddleware[Any, None, Any]", skills)),
         backend=backend,
         state_schema=ResearchAgentState,
     )
