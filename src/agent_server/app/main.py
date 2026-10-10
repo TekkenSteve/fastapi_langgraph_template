@@ -112,6 +112,18 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     configure_tool_interceptor_factory(lambda user_id: PolicyToolInterceptor(get_policy_engine(), user_id))
 
+    # Open server outside LOCAL: authentication is what makes the tenant scoping
+    # in this codebase mean anything. Warn rather than refuse — self-hosted
+    # deployments legitimately terminate auth at their gateway (documented in
+    # AGENTS.md), and a hard failure there would be a breaking default change.
+    if settings.app.ENV_MODE != "LOCAL" and settings.app.AUTH_TYPE == "noop":
+        logger.error(
+            "authentication_disabled",
+            env_mode=settings.app.ENV_MODE,
+            auth_type=settings.app.AUTH_TYPE,
+            note="every request is anonymous; configure auth.path or terminate auth upstream",
+        )
+
     # Policy engine: OPA sidecar replaces the local engine when configured.
     if settings.policy.OPA_URL:
         from agent_server.auth.opa_policy import OpaPolicyEngine

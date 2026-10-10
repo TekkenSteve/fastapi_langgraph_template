@@ -4936,6 +4936,12 @@
             "type": "object",
             "title": "Flags",
             "description": "Feature flags indicating available capabilities."
+          },
+          "capabilities": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Capabilities",
+            "description": "Per-capability readiness, checked against this deployment (not just the flags)."
           }
         },
         "type": "object",

@@ -10,6 +10,7 @@ from agent_server import __version__
 from agent_server.config.settings import settings
 from agent_server.domain.errors import UNAVAILABLE
 from agent_server.repo.database import db_manager
+from agent_server.usecase.capabilities import build_capability_report
 
 router = APIRouter(tags=["Health"])
 
@@ -31,6 +32,10 @@ class InfoResponse(BaseModel):
     description: str = Field(..., description="Service description.")
     status: str = Field(..., description="Current service status.")
     flags: dict = Field(..., description="Feature flags indicating available capabilities.")
+    capabilities: dict = Field(
+        default_factory=dict,
+        description="Per-capability readiness, checked against this deployment (not just the flags).",
+    )
 
 
 @router.get("/info", response_model=InfoResponse)
@@ -46,6 +51,7 @@ async def info(_request: Request) -> InfoResponse:
         description="Production-ready Agent Protocol server built on LangGraph",
         status="running",
         flags={"assistants": True, "crons": settings.cron.CRON_ENABLED},
+        capabilities=build_capability_report(),
     )
 
 
