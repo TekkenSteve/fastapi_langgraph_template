@@ -48,6 +48,7 @@ from agent_server.infra.circuit_breaker import (
     get_breaker_storage,
     reset_breaker_state,
 )
+from agent_server.infra.observability.metrics import MCP_TOOL_LOADS, MCP_TOOLS_EXPOSED
 from agent_server.repo.graphs.mcp_apps import ensure_mcp_apps_capability_advertised, filter_model_facing_tools
 from agent_server.repo.graphs.mcp_errors import classify_mcp_error
 
@@ -311,6 +312,8 @@ def mcp_breaker(name: str, conn: dict[str, Any]) -> Any:
             fail_max=settings.mcp.MCP_BREAKER_THRESHOLD,
             cooldown_secs=settings.mcp.MCP_BREAKER_COOLDOWN_SECS,
             storage=get_breaker_storage(redis_client=redis_client),
+            # Dashboards get the server name, not the fingerprint-bearing key.
+            label=name,
         )
         _breaker_server_names[key] = name
     return _breakers[key]
@@ -475,8 +478,9 @@ async def load_mcp_tools(
     for name, result in zip(pending, results, strict=True):
         if isinstance(result, BaseException):
             # Same classification the API surfaces use, so "auth" and "down"
-            # are distinguishable in logs too.
+            # are distinguishable in logs and on a dashboard too.
             failure = classify_mcp_error(result, server=name)
+            MCP_TOOL_LOADS.labels(server=name, outcome=failure.reason.value).inc()
             logger.warning("mcp_tools_load_failed", server=name, reason=failure.reason.value, error=failure.message)
             continue
         allowed = connections[name].allowed_tools
@@ -485,6 +489,8 @@ async def load_mcp_tools(
             if len(kept) != len(result):
                 logger.info("mcp_tools_allowlisted", server=name, kept=len(kept), loaded=len(result))
             result = kept
+        MCP_TOOL_LOADS.labels(server=name, outcome="ok").inc()
+        MCP_TOOLS_EXPOSED.labels(server=name).set(len(result))
         tools.extend(result)
     if settings.mcp.MCP_APPS_ENABLED:
         tools = filter_model_facing_tools(tools)

@@ -16,6 +16,8 @@ from typing import Any, Protocol
 
 import structlog
 
+from agent_server.infra.observability.metrics import CIRCUIT_BREAKER_OPEN, CIRCUIT_BREAKER_TRIPS
+
 logger = structlog.getLogger(__name__)
 
 
@@ -77,13 +79,25 @@ class CircuitBreaker:
     """fail_max consecutive failures → open for cooldown_secs; the first call
     after the cooldown is a probe that re-opens on failure (half-open)."""
 
-    def __init__(self, name: str, *, fail_max: int, cooldown_secs: float, storage: BreakerStorage) -> None:
+    def __init__(
+        self,
+        name: str,
+        *,
+        fail_max: int,
+        cooldown_secs: float,
+        storage: BreakerStorage,
+        label: str | None = None,
+    ) -> None:
         if fail_max < 1:
             raise ValueError("fail_max must be >= 1")
         self._name = name
+        # What dashboards see. The registry key can carry a fingerprint (one
+        # breaker per endpoint spec); the label is the human name for it.
+        self._label = label or name
         self._fail_max = fail_max
         self._cooldown_secs = cooldown_secs
         self._storage = storage
+        CIRCUIT_BREAKER_OPEN.labels(name=self._label).set(0)
 
     async def state_snapshot(self) -> dict[str, Any]:
         """Read-only view for diagnostics: failures, open, seconds remaining."""
@@ -109,10 +123,13 @@ class CircuitBreaker:
             if failures >= self._fail_max or open_until > 0.0:
                 # Threshold reached, or the half-open probe failed — re-open.
                 new_open_until = time.time() + self._cooldown_secs
+                CIRCUIT_BREAKER_OPEN.labels(name=self._label).set(1)
+                CIRCUIT_BREAKER_TRIPS.labels(name=self._label).inc()
                 logger.warning("circuit_breaker_opened", name=self._name, failures=failures)
             await self._storage.set_state(self._name, failures=failures, open_until=new_open_until)
             raise
         await self._storage.clear(self._name)
+        CIRCUIT_BREAKER_OPEN.labels(name=self._label).set(0)
         return result
 
 

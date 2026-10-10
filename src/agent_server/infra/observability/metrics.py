@@ -41,6 +41,41 @@ for _outcome in ("deleted", "pruned", "error"):
     THREAD_TTL_SWEPT.labels(outcome=_outcome)
 
 
+# --- circuit breakers -----------------------------------------------------------
+# A flapping upstream is invisible in HTTP metrics: the server degrades by
+# dropping features, not by returning 5xx. These two make it alertable.
+CIRCUIT_BREAKER_OPEN = prometheus_client.Gauge(
+    "agent_server_circuit_breaker_open",
+    "1 while the breaker for this endpoint is open (calls fast-fail), 0 otherwise. "
+    "One series per registered breaker label; created at 0 so temporary abscence "
+    "cannot be mistaken for a closed circuit.",
+    labelnames=["name"],
+)
+
+CIRCUIT_BREAKER_TRIPS = prometheus_client.Counter(
+    "agent_server_circuit_breaker_trips_total",
+    "Times the breaker opened: reaching the failure threshold, or a half-open probe failing and re-opening.",
+    labelnames=["name"],
+)
+
+# --- MCP tool loading -----------------------------------------------------------
+MCP_TOOL_LOADS = prometheus_client.Counter(
+    "agent_server_mcp_tool_loads_total",
+    "MCP tool loads per server, by outcome. 'ok' is a completed handshake; every "
+    "other value is the classified failure reason (mcp_errors.McpFailureReason), "
+    "so an auth problem and a dead server are distinguishable on a dashboard.",
+    labelnames=["server", "outcome"],
+)
+
+MCP_TOOLS_EXPOSED = prometheus_client.Gauge(
+    "agent_server_mcp_tools_exposed",
+    "Tools the server exposed after allowlist and model-facing filtering. A drop "
+    "to 0 on a previously healthy server means the catalog disappeared (auth "
+    "expiry, a renamed tool set, or an allowlist that matches nothing).",
+    labelnames=["server"],
+)
+
+
 def setup_prometheus_metrics(
     app: FastAPI,
     registry: prometheus_client.CollectorRegistry | None = None,
