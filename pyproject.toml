@@ -55,7 +55,11 @@ dependencies = [
     "redis[hiredis]>=5.0.0",
     # Cron expression parsing
     "croniter>=6.0.0",
-    "deepagents>=0.7.13",
+    # Upper bound on purpose: graphs/shared/deepagents_skills.py adapts a private
+    # deepagents loader, and pre-1.0 minors have moved such symbols before. The
+    # adapter's contract test fails first; the bound keeps that failure a choice
+    # rather than a surprise.
+    "deepagents>=0.7.13,<0.9",
     "limits>=5.8.0",
 ]
 

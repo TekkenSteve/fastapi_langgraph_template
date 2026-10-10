@@ -28,9 +28,11 @@ class _KeywordSelector:
         return [s for s in skills if s["name"] in query]
 
 
-def _middleware(**kwargs: Any) -> SkillRouterMiddleware:
+def _middleware(*, selector: Any = None, **kwargs: Any) -> SkillRouterMiddleware:
     backend = FilesystemBackend(root_dir=SKILLS_DIR, virtual_mode=True)
-    return SkillRouterMiddleware(backend=backend, sources=[("/", "Project")], selector=_KeywordSelector(), **kwargs)
+    return SkillRouterMiddleware(
+        backend=backend, sources=[("/", "Project")], selector=selector or _KeywordSelector(), **kwargs
+    )
 
 
 async def test_filters_to_relevant_skills() -> None:
@@ -63,10 +65,65 @@ async def test_top_k_caps_the_listing() -> None:
     assert len(update["skills_metadata"]) == 1
 
 
+async def test_always_include_does_not_consume_the_top_k_budget() -> None:
+    """Pinned skills are pinned; they must not crowd out the selected ones."""
+    middleware = _middleware(top_k=1, always_include=["source-critic"])
+    state = {"messages": [HumanMessage(content="use web-research please")]}
+
+    update = await middleware.abefore_agent(state, None, {})
+
+    assert {s["name"] for s in update["skills_metadata"]} == {"web-research", "source-critic"}
+
+
 async def test_skips_when_state_already_has_skills() -> None:
     middleware = _middleware()
     state = {"messages": [], "skills_metadata": []}
     assert await middleware.abefore_agent(state, None, {}) is None
+
+
+async def test_selection_is_seeded_once_per_thread() -> None:
+    """A checkpointed selection is reused — later turns do not re-select.
+
+    That keeps a task's skills available across its follow-up turns; the
+    consequence (a mid-thread install lands in the next thread) is documented in
+    the middleware docstring.
+    """
+    middleware = _middleware()
+    seeded = {"messages": [HumanMessage(content="hello")], "skills_metadata": [{"name": "web-research"}]}
+
+    assert await middleware.abefore_agent(seeded, None, {}) is None
+
+
+class _BoomSelector:
+    async def select(self, query: str, skills: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        raise RuntimeError("selector down")
+
+
+async def test_a_selector_outage_falls_back_to_the_full_catalog() -> None:
+    """Failing open keeps the model able to do the task."""
+    middleware = _middleware(selector=_BoomSelector())
+    state = {"messages": [HumanMessage(content="use web-research please")]}
+
+    update = await middleware.abefore_agent(state, None, {})
+
+    assert {s["name"] for s in update["skills_metadata"]} == {"web-research", "source-critic"}
+
+
+async def test_source_load_errors_reach_the_state_channel() -> None:
+    """A source that cannot be listed must be audible, not silently "no skills"."""
+    backend = FilesystemBackend(root_dir=SKILLS_DIR, virtual_mode=True)
+    middleware = SkillRouterMiddleware(
+        backend=backend,
+        sources=[("/", "Project"), ("/missing/", "Missing")],
+        selector=_KeywordSelector(),
+    )
+    state = {"messages": [HumanMessage(content="web-research")]}
+
+    update = await middleware.abefore_agent(state, None, {})
+
+    assert update["skills_metadata"], "the readable source still contributes"
+    assert update["skills_load_errors"]
+    assert "/missing/" in update["skills_load_errors"][0]
 
 
 def test_latest_user_text_reads_last_human_message() -> None:

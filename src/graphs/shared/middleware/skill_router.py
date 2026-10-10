@@ -1,9 +1,21 @@
-"""Skill router middleware: per-request top-k skill selection.
+"""Skill router middleware: top-k skill selection, seeded once per thread.
 
 SkillsMiddleware lists every skill statically; beyond ~20 skills the listing
 itself starts to crowd the context. This subclass keeps progressive disclosure
-but selects only the most relevant skills for the current request before the
-model ever sees the list.
+but selects only the most relevant skills before the model ever sees the list.
+
+**Selection semantics.** The selection is written to ``skills_metadata``, which
+deepagents checkpoints, so it is computed on a thread's first turn and reused by
+every later turn of that thread. Two consequences worth knowing:
+
+- a skill installed in the hub mid-thread becomes visible in the next *thread*,
+  not the next message;
+- a task's skills stay available across its follow-up turns, where re-selecting
+  on a low-signal message ("yes, go on") would drop the very skills the task is
+  following.
+
+That is the deliberate trade. Re-selecting every turn would make the first
+consequence disappear and the second one appear.
 
 Selection is pluggable via SkillSelector — mirror of langchain's
 LLMToolSelectorMiddleware idea, applied to skills. Two selectors ship here:
@@ -18,19 +30,13 @@ is appended to ``sources`` automatically, so user skills override same-named
 builtin ones (later source wins). Scripts land in StateBackend, not the pod
 disk — they are inert unless the graph deliberately wires an executor.
 
-NOTE: uses deepagents' private `_alist_skills` loader — revisit on upgrades.
+deepagents' skill API is reached only through `shared/deepagents_skills.py`.
 """
 
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Protocol
 
 import structlog
-from deepagents.middleware.skills import (
-    SkillMetadata,
-    SkillsMiddleware,
-    SkillsStateUpdate,
-    _alist_skills,
-)
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -38,6 +44,12 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.runtime import Runtime
 
 from agent_server.contracts import configurable_user_id
+from shared.deepagents_skills import (
+    SkillMetadata,
+    SkillsMiddleware,
+    SkillsStateUpdate,
+    alist_skills_with_errors,
+)
 from shared.models import load_chat_model
 
 logger = structlog.getLogger(__name__)
@@ -159,15 +171,35 @@ class SkillRouterMiddleware(SkillsMiddleware):
         if skills:
             logger.info("user_skills_materialized", user_id=user_id, names=[s["name"] for s in skills])
 
-    async def _load_all_skills(self) -> list[SkillMetadata]:
+    async def _load_all_skills(self) -> tuple[list[SkillMetadata], list[str]]:
+        """The catalog plus per-source load errors, so a broken source is audible."""
         skills: list[SkillMetadata] = []
+        load_errors: list[str] = []
         for source in self.sources:
-            skills.extend(await _alist_skills(self._backend, source))
+            source_skills, source_error = await alist_skills_with_errors(self._backend, source)
+            if source_error is not None:
+                load_errors.append(source_error)
+            skills.extend(source_skills)
         # Later sources override earlier ones by name (deepagents semantics).
         by_name: dict[str, SkillMetadata] = {}
         for skill in skills:
             by_name[skill["name"]] = skill
-        return list(by_name.values())
+        return list(by_name.values()), load_errors
+
+    async def _select(self, query: str, all_skills: list[SkillMetadata]) -> list[SkillMetadata]:
+        """Top-k for this request.
+
+        A selector outage degrades to the full catalog — the pre-router
+        behaviour, which keeps the model able to do the task. The catalog is
+        bounded, so the cost of failing open is context, not correctness.
+        """
+        if not query:
+            return all_skills[: self._top_k]
+        try:
+            return await self._selector.select(query, all_skills)
+        except Exception as e:  # a selector outage must never fail the run
+            logger.warning("skill_selector_failed", error=str(e), skills=len(all_skills))
+            return all_skills
 
     # The parent's abefore_agent is typed for SkillsState; ours deliberately
     # widens to dict (LSP contravariance) — same shape the parent itself
@@ -175,26 +207,30 @@ class SkillRouterMiddleware(SkillsMiddleware):
     async def abefore_agent(  # ty: ignore[invalid-method-override]
         self, state: dict[str, Any], runtime: Runtime, config: RunnableConfig
     ) -> SkillsStateUpdate | None:
+        """Seed this thread's skill selection (see the module docstring)."""
         if "skills_metadata" in state:
             return None
 
         if self._user_skills_loader is not None:
             await self._materialize_user_skills(config)
 
-        all_skills = await self._load_all_skills()
+        all_skills, load_errors = await self._load_all_skills()
+        if load_errors:
+            logger.warning("skill_sources_failed", count=len(load_errors), errors=load_errors)
+
         if not all_skills:
-            return SkillsStateUpdate(skills_metadata=[])
+            return SkillsStateUpdate(skills_metadata=[], skills_load_errors=load_errors)
 
-        query = _latest_user_text(state)
-        selected = await self._selector.select(query, all_skills) if query else all_skills[: self._top_k]
+        selected = await self._select(_latest_user_text(state), all_skills)
 
-        # always_include entries survive every filter, without duplicates
-        selected_names = {s["name"] for s in selected}
-        pinned = [s for s in all_skills if s["name"] in self._always_include and s["name"] not in selected_names]
-        skills = [*pinned, *selected][: self._top_k]
+        # always_include entries survive every filter and do not consume the
+        # top_k budget — that is what "always include" has to mean.
+        pinned = [s for s in all_skills if s["name"] in self._always_include]
+        pinned_names = {s["name"] for s in pinned}
+        skills = [*pinned, *[s for s in selected if s["name"] not in pinned_names][: self._top_k]]
 
         logger.info("skill_router_selected", count=len(skills), names=[s["name"] for s in skills])
-        return SkillsStateUpdate(skills_metadata=skills)
+        return SkillsStateUpdate(skills_metadata=skills, skills_load_errors=load_errors)
 
 
 def _latest_user_text(state: dict[str, Any]) -> str:
