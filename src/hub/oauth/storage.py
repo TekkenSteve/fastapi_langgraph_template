@@ -12,7 +12,7 @@ seam. It routes the two record kinds by lifetime:
 
 import structlog
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from agent_server.repo.orm import get_session_maker
 from hub.db import McpOauthClient as McpOauthClientORM
@@ -80,3 +80,21 @@ class HubTokenStorage:
             row.registration = client_info.model_dump(mode="json")
             await session.commit()
         logger.info("mcp_oauth_client_registered", user_id=self._user_id, connection=self._connection_name)
+
+    async def clear(self) -> None:
+        """Drop this pair's tokens and DCR registration.
+
+        Called when the connection is deleted: recreating the same name must
+        not inherit the old endpoint's tokens or client registration.
+        """
+        await self._store.delete(self._tokens_key)
+        maker = get_session_maker()
+        async with maker() as session:
+            await session.execute(
+                delete(McpOauthClientORM).where(
+                    McpOauthClientORM.user_id == self._user_id,
+                    McpOauthClientORM.connection_name == self._connection_name,
+                )
+            )
+            await session.commit()
+        logger.info("mcp_oauth_state_cleared", user_id=self._user_id, connection=self._connection_name)

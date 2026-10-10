@@ -505,3 +505,49 @@ async def test_probe_surfaces_config_problems(monkeypatch: pytest.MonkeyPatch) -
     results = await mcp_router_mod.list_mcp_servers()
     assert results[0].status == "error"
     assert "unknown transport" in results[0].error
+
+
+# --- explicit disable + endpoint-scoped breakers ------------------------------
+
+
+async def test_a_disabled_user_connection_blocks_the_deployment_fallback() -> None:
+    """`None` in the provider map means "off", not "fall through to the registry"."""
+
+    async def _disabled(user_id: str) -> dict[str, Any]:
+        return {"acme-kb": None}
+
+    resolved = await loader.aresolve_mcp_connections(["acme-kb"], user_id="u1", connection_provider=_disabled)
+
+    assert resolved == {}
+
+
+async def test_breakers_are_scoped_per_endpoint_not_per_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two tenants may both name a connection "acme-kb"; one flapping endpoint
+    must not trip the other's breaker."""
+    monkeypatch.setattr(loader.settings.mcp, "MCP_BREAKER_THRESHOLD", 1)
+
+    async def fake_load(name: str, conn: dict, timeout: float, interceptors: Any) -> list:
+        raise ConnectionError("refused")
+
+    monkeypatch.setattr(loader, "_load_server_tools", fake_load)
+    alice = {"transport": "streamable_http", "url": "https://alice.example.com/mcp"}
+    bob = {"transport": "streamable_http", "url": "https://bob.example.com/mcp"}
+
+    await loader.load_mcp_tools({"acme-kb": alice})  # opens alice's breaker
+    alice_state = await loader.get_mcp_breaker_states()
+
+    assert alice_state["acme-kb"]["open"] is True
+    assert loader.breaker_key("acme-kb", alice) != loader.breaker_key("acme-kb", bob)
+
+    # Bob's endpoint is reached: his breaker is untouched by alice's failures.
+    calls: list[str] = []
+
+    async def fake_load_ok(name: str, conn: dict, timeout: float, interceptors: Any) -> list:
+        calls.append(conn["url"])
+        return _fake_tools(name)
+
+    monkeypatch.setattr(loader, "_load_server_tools", fake_load_ok)
+    tools = await loader.load_mcp_tools({"acme-kb": bob})
+
+    assert calls == ["https://bob.example.com/mcp"]
+    assert [t.name for t in tools] == ["acme-kb"]

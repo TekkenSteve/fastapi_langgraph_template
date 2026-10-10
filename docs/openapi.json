@@ -4770,6 +4770,22 @@
             ],
             "title": "Url"
           },
+          "auth_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "headers",
+                  "oauth"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auth Type"
+          },
           "headers": {
             "anyOf": [
               {
@@ -4798,7 +4814,7 @@
         },
         "type": "object",
         "title": "McpConnectionUpdate",
-        "description": "Patch payload. ``headers`` replaces the whole set when present."
+        "description": "Patch payload. ``headers`` (and ``auth_type``) replace the stored pair;\nthe service validates the resulting combination, not just the patch."
       },
       "McpConnectionView": {
         "properties": {

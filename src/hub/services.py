@@ -8,16 +8,20 @@ decision in subject–permission–object form (where a future ReBAC engine
 answers differently without this code changing).
 """
 
+from typing import Any
 from urllib.parse import urlparse
 
 import structlog
 from fastapi import HTTPException
 
 from agent_server.auth.policy import PolicyEngine
+from agent_server.auth.tool_authz import EXECUTE, MCP_TOOL
+from agent_server.config.settings import settings
 from agent_server.domain.policy import CREATE, DELETE, READ, SEARCH, UPDATE, ResourceRef
 from agent_server.domain.user import User
 from agent_server.infra.skill_fetcher import SkillFetchError, fetch_bytes
 from agent_server.infra.url_guard import UrlGuardError, validate_public_http_url
+from hub import apps_host
 from hub.config import hub_settings
 from hub.db import McpConnection as McpConnectionORM
 from hub.db import Skill as SkillORM
@@ -36,10 +40,12 @@ from hub.models import (
     SkillInstall,
     SkillSummary,
     SkillValidationError,
+    validate_auth_type_headers,
     validate_connection_name,
     validate_connection_url,
     validate_skill_files,
 )
+from hub.oauth.flow import purge_oauth_state
 from hub.repositories import McpConnectionRepository, SkillRepository
 
 logger = structlog.getLogger(__name__)
@@ -252,14 +258,25 @@ class McpConnectionService:
         return _to_view(row)
 
     async def update(self, name: str, payload: McpConnectionUpdate) -> McpConnectionView:
-        """Patch url / headers / enabled. ``headers`` replaces the whole set."""
+        """Patch url / auth_type / headers / enabled. ``headers`` replaces the whole set.
+
+        ``auth_type`` and ``headers`` are validated as the *resulting* pair: a
+        patch that switches to ``headers`` must leave headers behind, and one
+        that switches to ``none``/``oauth`` must not.
+        """
         row = await self._get_owned(name)
         await self._policy.require(self._user, UPDATE, self._ref(row))
         if payload.url is not None:
             await self._validate(row.name, payload.url)
             row.url = payload.url
-        if payload.headers is not None:
-            row.headers = payload.headers
+        auth_type = payload.auth_type if payload.auth_type is not None else row.auth_type
+        headers = payload.headers if payload.headers is not None else row.headers
+        try:
+            validate_auth_type_headers(auth_type, headers or {})
+        except McpConnectionValidationError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+        row.auth_type = auth_type
+        row.headers = headers or {}
         if payload.enabled is not None:
             row.enabled = payload.enabled
         await self._connections.save(row)
@@ -267,8 +284,49 @@ class McpConnectionService:
         return _to_view(row)
 
     async def delete(self, name: str) -> None:
-        """Remove a connection."""
+        """Remove a connection and every credential/registration it owns.
+
+        Recreating the same name must start clean: tokens, the parked browser
+        flow and the DCR client registration all belong to the deleted row.
+        """
         row = await self._get_owned(name)
         await self._policy.require(self._user, DELETE, self._ref(row))
         await self._connections.delete(row)
+        await purge_oauth_state(row.user_id, row.name)
         logger.info("mcp_connection_deleted", user=self._user.identity, name=name)
+
+    # --- MCP Apps host proxy -------------------------------------------------
+    # The router owns no connection resolution and no session logic: everything
+    # comes through here, so a proxy call passes the same ownership + policy
+    # gate, the same enabled check and the same endpoint breaker as the graph
+    # path.
+
+    async def _proxy_row(self, name: str) -> McpConnectionORM:
+        """The caller's connection, authorized for use and not disabled."""
+        row = await self._get_owned(name)
+        await self._policy.require(self._user, READ, self._ref(row))
+        if not row.enabled:
+            raise HTTPException(status_code=409, detail=f"MCP connection {name!r} is disabled")
+        return row
+
+    async def proxy_list_tools(self, name: str) -> list[dict[str, Any]]:
+        """The connection's tools with metadata (incl. _meta.ui), unfiltered."""
+        return await apps_host.list_tools(await self._proxy_row(name))
+
+    async def proxy_call_tool(self, name: str, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        """Call one tool by name, under the same per-invocation rule as the model path."""
+        row = await self._proxy_row(name)
+        if settings.mcp.MCP_TOOL_AUTHZ_ENABLED:
+            # Same vocabulary as auth/tool_authz.PolicyToolInterceptor (which
+            # the graph path composes under this same switch), so the model and
+            # UI paths answer identically.
+            await self._policy.require(self._user, EXECUTE, ResourceRef(MCP_TOOL, f"{row.name}/{tool_name}"))
+        return await apps_host.call_tool(row, tool_name, args)
+
+    async def proxy_list_resources(self, name: str) -> dict[str, Any]:
+        """The connection's resources and resource templates."""
+        return await apps_host.list_resources(await self._proxy_row(name))
+
+    async def proxy_read_resource(self, name: str, uri: str) -> dict[str, Any]:
+        """Read one resource by URI; text contents only."""
+        return await apps_host.read_resource(await self._proxy_row(name), uri)

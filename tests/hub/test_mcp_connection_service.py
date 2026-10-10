@@ -3,11 +3,14 @@
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
 
 from agent_server.auth.policy import LocalPolicyEngine, PolicyEngine
+from agent_server.auth.tool_authz import MCP_TOOL
+from agent_server.config.settings import settings
 from agent_server.domain.policy import AccessFilter, Permission, ResourceRef, ResourceType
 from agent_server.domain.user import User
 from hub.models import McpConnectionCreate, McpConnectionUpdate
@@ -83,6 +86,18 @@ def _service(
     repo: FakeConnectionRepo, user: User | None = None, policy: PolicyEngine | None = None
 ) -> McpConnectionService:
     return McpConnectionService(repo, policy or LocalPolicyEngine(), user or User(identity="alice"))
+
+
+@pytest.fixture(autouse=True)
+def _purge_oauth_state(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+    """Deleting a connection purges OAuth state; the suite must stay DB-free.
+
+    Only ``test_delete_purges_oauth_state`` asserts on it — the rest of the
+    tests just need the call to be inert.
+    """
+    purge = AsyncMock()
+    monkeypatch.setattr("hub.services.purge_oauth_state", purge)
+    return purge
 
 
 def _create(name: str = "acme-kb", url: str = PUBLIC_URL, headers: dict[str, str] | None = None) -> McpConnectionCreate:
@@ -228,3 +243,114 @@ class TestSsrfGate:
         with pytest.raises(HTTPException) as exc:
             await _service(FakeConnectionRepo()).create(_create(url="http://10.1.2.3/mcp"))
         assert exc.value.status_code == 422
+
+
+def _seeded(owner: str = "alice", name: str = "acme-kb", **overrides: Any) -> FakeConnectionRepo:
+    repo = FakeConnectionRepo()
+    repo.rows[(owner, name)] = _row(owner, name, **overrides)
+    return repo
+
+
+class TestUpdateAuthTypeHeaders:
+    """``auth_type`` and ``headers`` are one pair, validated as the resulting state."""
+
+    async def test_switch_to_oauth_clears_the_headers(self) -> None:
+        repo = FakeConnectionRepo()
+        service = _service(repo)
+        await service.create(_create(headers={"Authorization": SECRET}))
+
+        view = await service.update("acme-kb", McpConnectionUpdate(auth_type="oauth", headers={}))
+
+        assert view.auth_type == "oauth"
+        assert view.header_keys == []
+
+    async def test_switch_to_headers_without_headers_is_422(self) -> None:
+        repo = FakeConnectionRepo()
+        service = _service(repo)
+        await service.create(_create())
+
+        with pytest.raises(HTTPException) as exc:
+            await service.update("acme-kb", McpConnectionUpdate(auth_type="headers"))
+        assert exc.value.status_code == 422
+
+    async def test_leaving_credentials_on_a_non_header_auth_type_is_422(self) -> None:
+        """Otherwise the row holds a secret nothing will ever send."""
+        repo = FakeConnectionRepo()
+        service = _service(repo)
+        await service.create(_create(headers={"Authorization": SECRET}))
+
+        with pytest.raises(HTTPException) as exc:
+            await service.update("acme-kb", McpConnectionUpdate(auth_type="oauth"))
+        assert exc.value.status_code == 422
+
+
+async def test_delete_purges_oauth_state(_purge_oauth_state: AsyncMock) -> None:
+    """Recreating the same name must not inherit tokens or a DCR registration."""
+    repo = FakeConnectionRepo()
+    service = _service(repo)
+    await service.create(_create())
+
+    await service.delete("acme-kb")
+
+    _purge_oauth_state.assert_awaited_once_with("alice", "acme-kb")
+
+
+class DenyToolEngine(LocalPolicyEngine):
+    """Allows everything the local engine allows except per-tool authorization."""
+
+    async def require(
+        self, subject: User, permission: Permission, resource: ResourceRef, context: dict | None = None
+    ) -> None:
+        if resource.type == MCP_TOOL:
+            raise HTTPException(status_code=403, detail="tool denied")
+        await super().require(subject, permission, resource, context)
+
+
+class TestHostProxy:
+    """Proxy calls go through the service: ownership, policy, enabled, breaker."""
+
+    async def test_stranger_gets_404(self) -> None:
+        repo = _seeded()
+        with pytest.raises(HTTPException) as exc:
+            await _service(repo, user=User(identity="bob")).proxy_list_tools("acme-kb")
+        assert exc.value.status_code == 404
+
+    async def test_policy_denial_is_403(self) -> None:
+        with pytest.raises(HTTPException) as exc:
+            await _service(_seeded(), policy=DenyAllEngine()).proxy_list_tools("acme-kb")
+        assert exc.value.status_code == 403
+
+    async def test_disabled_connection_is_409(self) -> None:
+        with pytest.raises(HTTPException) as exc:
+            await _service(_seeded(enabled=False)).proxy_list_tools("acme-kb")
+        assert exc.value.status_code == 409
+
+    async def test_list_tools_delegates_with_the_resolved_row(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        row = _row("alice", "acme-kb")
+        repo = _seeded()
+        listing = AsyncMock(return_value=[{"name": "render"}])
+        monkeypatch.setattr("hub.services.apps_host.list_tools", listing)
+
+        assert await _service(repo).proxy_list_tools("acme-kb") == [{"name": "render"}]
+        listing.assert_awaited_once_with(row)
+
+    async def test_call_tool_skips_the_tool_check_when_authz_is_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        call = AsyncMock(return_value={"content": [], "artifact": None})
+        monkeypatch.setattr("hub.services.apps_host.call_tool", call)
+        monkeypatch.setattr(settings.mcp, "MCP_TOOL_AUTHZ_ENABLED", False)
+
+        await _service(_seeded(), policy=DenyToolEngine()).proxy_call_tool("acme-kb", "render", {})
+
+        call.assert_awaited_once()
+
+    async def test_call_tool_checks_per_invocation_authz_when_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Same switch and vocabulary as the model path's PolicyToolInterceptor."""
+        call = AsyncMock()
+        monkeypatch.setattr("hub.services.apps_host.call_tool", call)
+        monkeypatch.setattr(settings.mcp, "MCP_TOOL_AUTHZ_ENABLED", True)
+
+        with pytest.raises(HTTPException) as exc:
+            await _service(_seeded(), policy=DenyToolEngine()).proxy_call_tool("acme-kb", "render", {})
+
+        assert exc.value.status_code == 403
+        call.assert_not_awaited()

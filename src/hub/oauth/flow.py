@@ -116,7 +116,8 @@ async def complete_from_browser(state: str, code: str) -> bool:
     """Callback route entry: park a browser-delivered code by its state.
 
     Returns False when the state is unknown or expired (stale/double
-    callback), so the route can answer 400 instead of parking an orphan code.
+    callback), or when its flow is no longer parked — a deleted connection
+    must not collect a code, so a stale ``state`` key cannot resurrect it.
     """
     store = get_token_store()
     raw = await store.get(_state_key(state))
@@ -124,9 +125,46 @@ async def complete_from_browser(state: str, code: str) -> bool:
         return False
     await store.delete(_state_key(state))
     ctx = json.loads(raw)
+    if await store.get(_pending_key(ctx["user_id"], ctx["connection"])) is None:
+        logger.info("mcp_oauth_callback_without_pending_flow", connection=ctx["connection"])
+        return False
     await store.set(_code_key(ctx["user_id"], ctx["connection"]), code, ttl_secs=_CODE_TTL_SECS)
     logger.info("mcp_oauth_code_received", connection=ctx["connection"])
     return True
+
+
+async def abandon_from_browser(state: str) -> bool:
+    """Callback route entry for a denial: drop the parked flow.
+
+    The auth server redirects with ``error=access_denied`` instead of a code.
+    Clearing the pending record lets the next attempt mint a fresh authorize
+    URL and state rather than replaying the denied one. Returns whether the
+    state was known.
+    """
+    store = get_token_store()
+    raw = await store.get(_state_key(state))
+    if raw is None:
+        return False
+    await store.delete(_state_key(state))
+    ctx = json.loads(raw)
+    await store.delete(_pending_key(ctx["user_id"], ctx["connection"]))
+    await store.delete(_code_key(ctx["user_id"], ctx["connection"]))
+    logger.info("mcp_oauth_flow_abandoned", connection=ctx["connection"])
+    return True
+
+
+async def purge_oauth_state(user_id: str, connection_name: str) -> None:
+    """Drop every OAuth artifact of one connection (tokens, parked flow, DCR).
+
+    Called on connection deletion. The ``state -> owner`` keys are deliberately
+    left to their TTL: they carry no secret, and ``complete_from_browser``
+    refuses a callback whose pending flow is gone, so they cannot resurrect a
+    deleted connection.
+    """
+    await HubTokenStorage(user_id, connection_name).clear()
+    store = get_token_store()
+    await store.delete(_pending_key(user_id, connection_name))
+    await store.delete(_code_key(user_id, connection_name))
 
 
 def build_oauth_auth(user_id: str, connection_name: str, server_url: str) -> OAuthClientProvider:

@@ -8,7 +8,7 @@ authorization from the policy engine inside the services.
 """
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +18,6 @@ from agent_server.auth.policy import PolicyEngine, get_policy_engine
 from agent_server.auth.rate_limit import rate_limit_default
 from agent_server.domain.user import User
 from agent_server.repo.orm import get_session
-from hub import apps_host
 from hub.models import (
     McpConnectionCreate,
     McpConnectionUpdate,
@@ -28,7 +27,7 @@ from hub.models import (
     SkillInstall,
     SkillSummary,
 )
-from hub.oauth.flow import complete_from_browser
+from hub.oauth.flow import abandon_from_browser, complete_from_browser
 from hub.repositories import SqlAlchemyMcpConnectionRepository, SqlAlchemySkillRepository
 from hub.services import McpConnectionService, SkillService
 
@@ -46,12 +45,50 @@ router = APIRouter(tags=["hub"], dependencies=[*auth_dependency, Depends(rate_li
 public_router = APIRouter(tags=["hub"])
 
 
+def _callback_page(title: str, detail: str) -> str:
+    """A minimal page a human lands on. Never interpolates raw query text."""
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        f"<title>{title}</title></head>"
+        "<body style='font-family: system-ui; max-width: 40rem; margin: 4rem auto'>"
+        f"<h1>{title}</h1><p>{detail}</p></body></html>"
+    )
+
+
 @public_router.get("/hub/oauth/callback", response_class=HTMLResponse)
-async def oauth_callback(code: str, state: str) -> HTMLResponse:
-    """Park a browser-delivered OAuth code for the waiting run to pick up."""
+async def oauth_callback(
+    state: str = "",
+    code: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+) -> HTMLResponse:
+    """Finish (or abandon) a browser-delivered OAuth flow.
+
+    The auth server redirects here with either ``code`` or ``error``. Both
+    land on a human-readable page: a denial is a normal outcome, not a
+    protocol error, and the caller sitting in the paused run must not be the
+    only one who can see what happened.
+    """
+    if error is not None:
+        await abandon_from_browser(state)
+        # `error_description` is attacker-influenced text: it goes to the log
+        # (truncated) for diagnosis, never into the page.
+        logger.info("mcp_oauth_callback_error", error=error, description=(error_description or "")[:200])
+        return HTMLResponse(
+            _callback_page("Authorization failed", "The connection was not authorized. You can close this tab."),
+            status_code=400,
+        )
+    if not code:
+        return HTMLResponse(
+            _callback_page("Authorization failed", "This link is missing its authorization code."),
+            status_code=400,
+        )
     if not await complete_from_browser(state, code):
-        raise HTTPException(status_code=400, detail="Unknown or expired OAuth state")
-    return HTMLResponse("<p>Authorization complete — you can close this tab and return to the agent.</p>")
+        return HTMLResponse(
+            _callback_page("Link expired", "This authorization link is unknown or has expired. Please retry."),
+            status_code=400,
+        )
+    return HTMLResponse(_callback_page("Authorization complete", "You can close this tab and return to the agent."))
 
 
 # --- providers (DI composition roots; tests override these) -----------------
@@ -91,35 +128,29 @@ class ToolCallRequest(BaseModel):
 @router.post("/hub/mcp/{name}/tools/list")
 async def mcp_tools_list(
     name: str,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    service: McpConnectionService = Depends(get_mcp_connection_service),
 ) -> list[dict]:
     """List a connection's tools with metadata (visibility, ui)."""
-    repo = SqlAlchemyMcpConnectionRepository(session)
-    return await apps_host.list_tools(repo, user.identity, name)
+    return await service.proxy_list_tools(name)
 
 
 @router.post("/hub/mcp/{name}/tools/call")
 async def mcp_tools_call(
     name: str,
     payload: ToolCallRequest,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    service: McpConnectionService = Depends(get_mcp_connection_service),
 ) -> dict:
     """Call one tool by name through the caller's connection."""
-    repo = SqlAlchemyMcpConnectionRepository(session)
-    return await apps_host.call_tool(repo, user.identity, name, payload.tool_name, payload.args)
+    return await service.proxy_call_tool(name, payload.tool_name, payload.args)
 
 
 @router.post("/hub/mcp/{name}/resources/list")
 async def mcp_resources_list(
     name: str,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    service: McpConnectionService = Depends(get_mcp_connection_service),
 ) -> dict:
     """List a connection's resources and resource templates."""
-    repo = SqlAlchemyMcpConnectionRepository(session)
-    return await apps_host.list_resources(repo, user.identity, name)
+    return await service.proxy_list_resources(name)
 
 
 class ResourceReadRequest(BaseModel):
@@ -132,12 +163,10 @@ class ResourceReadRequest(BaseModel):
 async def mcp_resources_read(
     name: str,
     payload: ResourceReadRequest,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    service: McpConnectionService = Depends(get_mcp_connection_service),
 ) -> dict:
     """Read one resource by URI (text contents only)."""
-    repo = SqlAlchemyMcpConnectionRepository(session)
-    return await apps_host.read_resource(repo, user.identity, name, payload.uri)
+    return await service.proxy_read_resource(name, payload.uri)
 
 
 # --- skills ------------------------------------------------------------------

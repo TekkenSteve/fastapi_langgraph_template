@@ -6,7 +6,7 @@ import pytest
 from mcp.shared.auth import OAuthToken
 
 import hub.oauth.flow as flow_mod
-from hub.oauth.flow import OAuthFlowCorrelator, complete_from_browser
+from hub.oauth.flow import OAuthFlowCorrelator, abandon_from_browser, complete_from_browser, purge_oauth_state
 from hub.oauth.storage import HubTokenStorage
 from hub.oauth.store import InMemoryTokenStore, reset_token_store
 
@@ -91,6 +91,55 @@ async def test_complete_from_browser_parks_code_by_state(monkeypatch: pytest.Mon
 async def test_complete_from_browser_rejects_unknown_state(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(flow_mod, "get_token_store", InMemoryTokenStore)
     assert not await complete_from_browser("nope", "code-abc")
+
+
+async def test_complete_from_browser_rejects_a_state_whose_flow_is_gone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A leftover state key cannot resurrect a deleted/abandoned connection."""
+    store = InMemoryTokenStore()
+    monkeypatch.setattr(flow_mod, "get_token_store", lambda: store)
+    await store.set("mcp_oauth:state:state-123", json.dumps({"user_id": "u1", "connection": "acme-kb"}))
+
+    assert not await complete_from_browser("state-123", "code-abc")
+    assert await store.get("mcp_oauth:code:u1:acme-kb") is None
+
+
+async def test_abandon_from_browser_drops_the_parked_flow(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`error=access_denied` must let the next attempt mint a fresh URL."""
+    store = InMemoryTokenStore()
+    monkeypatch.setattr(flow_mod, "get_token_store", lambda: store)
+    c = _correlator(store)
+    await c.on_redirect(_AUTH_URL)
+
+    assert await abandon_from_browser("state-123")
+
+    assert await store.get("mcp_oauth:pending:u1:acme-kb") is None
+    assert await store.get("mcp_oauth:state:state-123") is None
+    assert not await abandon_from_browser("state-123")
+
+
+async def test_purge_oauth_state_clears_storage_and_parked_flow(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = InMemoryTokenStore()
+    monkeypatch.setattr(flow_mod, "get_token_store", lambda: store)
+    cleared: list[tuple[str, str]] = []
+
+    class _Storage:
+        def __init__(self, user_id: str, connection_name: str) -> None:
+            self._pair = (user_id, connection_name)
+
+        async def clear(self) -> None:
+            cleared.append(self._pair)
+
+    monkeypatch.setattr(flow_mod, "HubTokenStorage", _Storage)
+    await store.set("mcp_oauth:pending:u1:acme-kb", "{}")
+    await store.set("mcp_oauth:code:u1:acme-kb", "code-abc")
+
+    await purge_oauth_state("u1", "acme-kb")
+
+    assert cleared == [("u1", "acme-kb")]
+    assert await store.get("mcp_oauth:pending:u1:acme-kb") is None
+    assert await store.get("mcp_oauth:code:u1:acme-kb") is None
 
 
 async def test_token_storage_routes_tokens_to_store() -> None:

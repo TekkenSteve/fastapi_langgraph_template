@@ -198,6 +198,32 @@ def test_oauth_callback_rejects_unknown_state(callback_client: TestClient, monke
     assert response.status_code == 400
 
 
+def test_oauth_callback_reports_a_denial_as_a_readable_page(
+    callback_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`error=access_denied` is a normal outcome, not a 422 JSON body."""
+    abandoned = AsyncMock(return_value=True)
+    monkeypatch.setattr("hub.api.abandon_from_browser", abandoned)
+
+    response = callback_client.get(
+        "/hub/oauth/callback",
+        params={"error": "access_denied", "error_description": "<script>alert(1)</script>", "state": "st-1"},
+    )
+
+    assert response.status_code == 400
+    assert response.headers["content-type"].startswith("text/html")
+    assert "Authorization failed" in response.text
+    # The description is attacker-influenced text on a public route.
+    assert "<script>" not in response.text
+    abandoned.assert_awaited_once_with("st-1")
+
+
+def test_oauth_callback_missing_code_is_a_page_not_a_422(callback_client: TestClient) -> None:
+    response = callback_client.get("/hub/oauth/callback", params={"state": "st-1"})
+    assert response.status_code == 400
+    assert response.headers["content-type"].startswith("text/html")
+
+
 # --- rate limiting ------------------------------------------------------------
 
 

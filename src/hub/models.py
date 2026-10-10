@@ -170,6 +170,8 @@ MCP_CONNECTION_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MAX_HEADERS = 20
 
 USER_TRANSPORT = "streamable_http"
+# The user-tier credential shapes (see McpConnectionCreate).
+AUTH_TYPE = Literal["none", "headers", "oauth"]
 
 
 class McpConnectionValidationError(ValueError):
@@ -191,6 +193,19 @@ def validate_connection_url(url: str) -> None:
         raise McpConnectionValidationError("url must be an absolute http(s) URL")
 
 
+def validate_auth_type_headers(auth_type: str, headers: dict[str, str]) -> None:
+    """The auth_type/headers pair rule, shared by payloads and service patches.
+
+    ``headers`` is exactly the credential shape of ``auth_type='headers'``:
+    requiring it there and forbidding it elsewhere keeps a connection from
+    holding credentials nothing will send.
+    """
+    if auth_type == "headers" and not headers:
+        raise McpConnectionValidationError("auth_type 'headers' requires at least one header")
+    if auth_type != "headers" and headers:
+        raise McpConnectionValidationError(f"headers are not allowed with auth_type {auth_type!r}")
+
+
 class McpConnectionCreate(BaseModel):
     """Create payload. ``transport`` is declared and pinned to the only value
     the user tier supports, so a future second transport is a conscious API
@@ -204,7 +219,7 @@ class McpConnectionCreate(BaseModel):
     name: str
     transport: Literal["streamable_http"] = USER_TRANSPORT
     url: str
-    auth_type: Literal["none", "headers", "oauth"] = "none"
+    auth_type: AUTH_TYPE = "none"
     headers: dict[str, str] = Field(default_factory=dict, description="Credentials; write-only, never returned")
 
     @field_validator("headers")
@@ -216,17 +231,16 @@ class McpConnectionCreate(BaseModel):
 
     @model_validator(mode="after")
     def _auth_type_matches_headers(self) -> "McpConnectionCreate":
-        if self.auth_type == "headers" and not self.headers:
-            raise ValueError("auth_type 'headers' requires at least one header")
-        if self.auth_type != "headers" and self.headers:
-            raise ValueError(f"headers are not allowed with auth_type {self.auth_type!r}")
+        validate_auth_type_headers(self.auth_type, self.headers)
         return self
 
 
 class McpConnectionUpdate(BaseModel):
-    """Patch payload. ``headers`` replaces the whole set when present."""
+    """Patch payload. ``headers`` (and ``auth_type``) replace the stored pair;
+    the service validates the resulting combination, not just the patch."""
 
     url: str | None = None
+    auth_type: AUTH_TYPE | None = None
     headers: dict[str, str] | None = None
     enabled: bool | None = None
 

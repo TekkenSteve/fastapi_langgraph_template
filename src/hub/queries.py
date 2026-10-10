@@ -36,8 +36,12 @@ async def load_user_skill_contents(user_id: str) -> list[dict]:
     return [{"name": s.name, "files": by_skill.get(s.skill_id, {})} for s in skills]
 
 
-async def load_enabled_connection_map(user_id: str) -> dict[str, dict]:
-    """Graph-side loader: enabled connections as a langchain-mcp-adapters map.
+async def load_connection_map(user_id: str) -> dict[str, dict | None]:
+    """Graph-side loader: the caller's connections as a langchain-mcp-adapters map.
+
+    A **disabled** connection is an explicit ``None`` block rather than an
+    omitted key: omission makes the name fall through to a deployment server
+    of the same name, so "off" would quietly mean "use the shared one".
 
     Opens its own session — called from the MCP loader, outside FastAPI DI.
     Includes credentials (headers): this map feeds the MCP client directly
@@ -45,12 +49,13 @@ async def load_enabled_connection_map(user_id: str) -> dict[str, dict]:
     """
     maker = get_session_maker()
     async with maker() as session:
-        rows = await session.execute(
-            select(McpConnectionORM).where(McpConnectionORM.user_id == user_id, McpConnectionORM.enabled.is_(True))
-        )
+        rows = await session.execute(select(McpConnectionORM).where(McpConnectionORM.user_id == user_id))
         connections = rows.scalars().all()
-    result: dict[str, dict] = {}
+    result: dict[str, dict | None] = {}
     for r in connections:
+        if not r.enabled:
+            result[r.name] = None
+            continue
         conn: dict = {"transport": r.transport, "url": r.url}
         if r.auth_type == "oauth":
             # Per-user SDK auth provider (PKCE/DCR/refresh); the first call

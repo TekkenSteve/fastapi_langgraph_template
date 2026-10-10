@@ -183,6 +183,10 @@ async def aresolve_mcp_connections(
     beats the registry; unknown names degrade to a warning. Only declared
     names are resolved — a user cannot add a server the graph did not opt
     into. Without a provider there is no user tier (deployment tiers only).
+
+    A ``None`` value in the provider map is an **explicit block**: the caller
+    disabled that connection, so the name resolves to nothing rather than
+    silently falling back to a deployment server of the same name.
     """
     user_connections: dict[str, Any] = {}
     if user_id and connection_provider is not None:
@@ -194,7 +198,11 @@ async def aresolve_mcp_connections(
     connections: dict[str, Any] = {}
     for name in server_names:
         if name in user_connections:
-            connections[name] = user_connections[name]
+            conn = user_connections[name]
+            if conn is None:
+                logger.info("mcp_user_connection_disabled", server=name)
+                continue
+            connections[name] = conn
             continue
         conn = _resolve_registry_entry(name)
         if conn is None:
@@ -211,13 +219,36 @@ async def aresolve_mcp_connections(
 # token store / SSE broker pattern: process memory by default, shared Redis
 # (async client) when the broker is enabled, so one pod's failures protect
 # the others.
+#
+# Keyed by server name **and endpoint fingerprint**: two tenants can both name
+# a connection "acme-kb" while pointing at different endpoints, and one
+# tenant's flapping server must not trip the other's. Identical specs share
+# one breaker, which is right — they are the same server.
 _breakers: dict[str, Any] = {}
+_breaker_server_names: dict[str, str] = {}
+
+
+def breaker_key(name: str, conn: Any) -> str:
+    """Registry key for one server endpoint (name + spec fingerprint)."""
+    return f"mcp:{name}:{_fingerprint_connections({name: conn})}"
 
 
 async def get_mcp_breaker_states() -> dict[str, dict[str, Any]]:
-    """Read-only breaker view for the debug probe. Only servers loaded at
-    least once this process appear — never-touched servers have no state."""
-    return {name: await breaker.state_snapshot() for name, breaker in _breakers.items()}
+    """Read-only breaker view for the debug probe, keyed by server name.
+
+    Only servers loaded at least once this process appear — never-touched
+    servers have no state. Several user-tier endpoints can share a name; the
+    probe reports the unhealthy one, since that is what the operator needs to
+    see.
+    """
+    states: dict[str, dict[str, Any]] = {}
+    for key, breaker in _breakers.items():
+        name = _breaker_server_names.get(key, key)
+        snapshot = await breaker.state_snapshot()
+        current = states.get(name)
+        if current is None or (snapshot["open"] and not current["open"]):
+            states[name] = snapshot
+    return states
 
 
 def env_override_names() -> list[str]:
@@ -229,26 +260,33 @@ def env_override_names() -> list[str]:
     return names
 
 
-def _get_breaker(name: str) -> Any:
-    """The CircuitBreaker for one MCP server (created lazily)."""
-    if name not in _breakers:
+def mcp_breaker(name: str, conn: Any) -> Any:
+    """The CircuitBreaker for one server *endpoint* (created lazily).
+
+    Public because the hub's MCP Apps host proxy runs the same endpoint and
+    must share its failure state (see ``breaker_key``).
+    """
+    key = breaker_key(name, conn)
+    if key not in _breakers:
         redis_client = None
         if settings.redis.REDIS_BROKER_ENABLED:
             from agent_server.infra.redis import redis_manager
 
             redis_client = redis_manager.get_client()
-        _breakers[name] = CircuitBreaker(
-            f"mcp:{name}",
+        _breakers[key] = CircuitBreaker(
+            key,
             fail_max=settings.mcp.MCP_BREAKER_THRESHOLD,
             cooldown_secs=settings.mcp.MCP_BREAKER_COOLDOWN_SECS,
             storage=get_breaker_storage(redis_client=redis_client),
         )
-    return _breakers[name]
+        _breaker_server_names[key] = name
+    return _breakers[key]
 
 
 def reset_mcp_breakers() -> None:
     """Drop all breaker state (tests; not needed at runtime)."""
     _breakers.clear()
+    _breaker_server_names.clear()
     reset_breaker_state()
 
 
@@ -345,7 +383,7 @@ async def load_mcp_tools(
     timeout = float(os.environ.get("MCP_LOAD_TIMEOUT_SECS", "15"))
 
     async def _guarded_load(name: str, conn: Any) -> list[BaseTool]:
-        return await _get_breaker(name).call(_load_server_tools, name, conn, timeout, interceptors)
+        return await mcp_breaker(name, conn).call(_load_server_tools, name, conn, timeout, interceptors)
 
     pending = {name: _guarded_load(name, conn) for name, conn in connections.items()}
     results = await asyncio.gather(*pending.values(), return_exceptions=True)
