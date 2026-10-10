@@ -111,6 +111,40 @@ def test_the_two_chains_use_different_version_tables() -> None:
     assert "version_table" not in framework_env
 
 
+def _revision_graph(versions_dir: Path) -> dict[str, str | None]:
+    """``revision -> down_revision`` from the migration modules' own literals."""
+    graph: dict[str, str | None] = {}
+    for path in versions_dir.rglob("*.py"):
+        module = ast.parse(path.read_text(), filename=str(path))
+        values: dict[str, str | None] = {}
+        for node in module.body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1:
+                target = node.targets[0]
+                if isinstance(target, ast.Name) and target.id in ("revision", "down_revision"):
+                    values[target.id] = node.value.value if isinstance(node.value, ast.Constant) else None
+        if "revision" in values and values["revision"] is not None:
+            graph[values["revision"]] = values.get("down_revision")
+    return graph
+
+
+@pytest.mark.parametrize("chain", ["agent_server/migrations/versions", "hub/migrations/versions"])
+def test_each_migration_chain_is_linear_and_intact(chain: str) -> None:
+    """A duplicate revision id or a dangling link breaks alembic in the field."""
+    other = "hub/migrations/versions" if chain.startswith("agent") else "agent_server/migrations/versions"
+    graph = _revision_graph(_SRC / chain)
+    other_graph = _revision_graph(_SRC / other)
+
+    assert graph, f"{chain} should contain migrations"
+    assert set(graph) & set(other_graph) == set(), "the two chains share a revision id"
+
+    dangling = [down for down in graph.values() if down is not None and down not in graph]
+    assert dangling == [], f"{chain} references revisions that do not exist: {dangling}"
+
+    referenced = {down for down in graph.values() if down is not None}
+    heads = sorted(set(graph) - referenced)
+    assert len(heads) == 1, f"{chain} must have exactly one head, found {heads} (multiple heads need a merge revision)"
+
+
 # --- stdio stays a deployment privilege ---------------------------------------
 
 

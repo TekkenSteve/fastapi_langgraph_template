@@ -15,6 +15,7 @@ server) and by the debug probe (which shows both).
 """
 
 import re
+import ssl
 from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import StrEnum
@@ -32,6 +33,7 @@ class McpFailureReason(StrEnum):
 
     UNREACHABLE = "unreachable"
     TIMEOUT = "timeout"
+    TLS_ERROR = "tls_error"
     AUTH_REQUIRED = "auth_required"
     HTTP_ERROR = "http_error"
     CIRCUIT_OPEN = "circuit_open"
@@ -43,6 +45,7 @@ class McpFailureReason(StrEnum):
 _STATUS_CODES: dict[McpFailureReason, int] = {
     McpFailureReason.UNREACHABLE: 502,
     McpFailureReason.TIMEOUT: 504,
+    McpFailureReason.TLS_ERROR: 502,
     McpFailureReason.AUTH_REQUIRED: 401,
     McpFailureReason.HTTP_ERROR: 502,
     McpFailureReason.CIRCUIT_OPEN: 503,
@@ -83,6 +86,31 @@ def _exception_chain(exc: BaseException) -> Iterator[BaseException]:
         seen.add(id(current))
         yield current
         current = current.__cause__ or current.__context__
+
+
+# TLS failures are their own fix (certificate, CA bundle, expiry), so they get
+# their own reason. The markers are the specific ones: a bare "handshake" or
+# "ssl" also appears in plain transport failures, and pointing an operator at a
+# certificate when the server is simply down is worse than saying nothing.
+_TLS_MARKERS = (
+    "certificate verify failed",
+    "certificate_verify_failed",
+    "sslcertverificationerror",
+    "self-signed certificate",
+    "certificate has expired",
+    "record layer failure",
+    "tlsv1 alert",
+)
+
+
+def _looks_like_tls_failure(chain: list[BaseException]) -> bool:
+    for exc in chain:
+        if isinstance(exc, ssl.SSLError):
+            return True
+        text = str(exc).lower()
+        if any(marker in text for marker in _TLS_MARKERS):
+            return True
+    return False
 
 
 def _resource_metadata(chain: list[BaseException]) -> str | None:
@@ -136,8 +164,17 @@ def classify_mcp_error(exc: BaseException, *, server: str) -> McpFailure:
             message=f"MCP server {server!r} timed out",
         )
 
-    # DNS, TCP, TLS or an unknown transport error: from the caller's side all of
-    # them mean "that server is not answering".
+    if _looks_like_tls_failure(chain):
+        return McpFailure(
+            server=server,
+            reason=McpFailureReason.TLS_ERROR,
+            message=(
+                f"MCP server {server!r} failed TLS verification: {str(exc)[:200]} — "
+                "check the server certificate, or CUSTOM_CA_PATH if it uses a private CA"
+            ),
+        )
+
+    # DNS or TCP: from the caller's side that server is simply not answering.
     return McpFailure(
         server=server,
         reason=McpFailureReason.UNREACHABLE,

@@ -75,6 +75,40 @@ def test_an_open_breaker_is_its_own_reason() -> None:
     assert failure.status_code == 503
 
 
+def test_a_certificate_failure_is_its_own_reason() -> None:
+    """TLS has a different fix from "server down" — say which one it is."""
+    import ssl
+
+    error = ssl.SSLCertVerificationError(1, "certificate verify failed: self-signed certificate")
+
+    failure = classify_mcp_error(error, server="acme-kb")
+
+    assert failure.reason is McpFailureReason.TLS_ERROR
+    assert failure.status_code == 502
+    assert "CUSTOM_CA_PATH" in failure.message
+
+
+def test_a_wrapped_certificate_failure_is_still_recognised() -> None:
+    import ssl
+
+    try:
+        try:
+            raise ssl.SSLCertVerificationError(1, "certificate verify failed")
+        except ssl.SSLError as inner:
+            raise ConnectionError("connection failed") from inner
+    except ConnectionError as outer:
+        failure = classify_mcp_error(outer, server="acme-kb")
+
+    assert failure.reason is McpFailureReason.TLS_ERROR
+
+
+def test_a_plain_transport_failure_is_not_blamed_on_tls() -> None:
+    """A generic handshake failure must not send the operator to the cert."""
+    failure = classify_mcp_error(RuntimeError("handshake failed: connection reset"), server="acme-kb")
+
+    assert failure.reason is McpFailureReason.UNREACHABLE
+
+
 def test_classification_walks_the_cause_chain() -> None:
     """Adapters wrap transport errors; the useful signal is at the bottom."""
     try:
