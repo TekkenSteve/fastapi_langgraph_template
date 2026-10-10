@@ -11,7 +11,7 @@ an LLM selector (cheap model picks from the catalog) and an embedding
 selector (cosine similarity over name+description; the server's pgvector
 store is the production-grade version of this).
 
-User-tier skills (skill hub, docs/design/hub.md): pass ``user_skills_loader``
+User-tier skills (skill hub): pass ``user_skills_loader``
 and the middleware materializes the caller's DB-stored skills into the run's
 ephemeral state filesystem under ``/user-skills/`` before listing. That path
 is appended to ``sources`` automatically, so user skills override same-named

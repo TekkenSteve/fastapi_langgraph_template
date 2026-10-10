@@ -23,7 +23,7 @@ SKILL = ResourceType("skill")
 MCP_CONNECTION = ResourceType("mcp_connection")
 
 # Hub business verbs (policies are organized by business concept, not API
-# CRUD — see docs/design/hub.md). The platform's generic verbs (READ etc.)
+# CRUD). The platform's generic verbs (READ etc.)
 # live in agent_server.domain.policy.
 INSTALL = Permission("install")
 UNINSTALL = Permission("uninstall")

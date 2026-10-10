@@ -17,7 +17,7 @@ Shape decisions:
   error — CLI-style scripts belong to the daytona/e2b tier.
 - Every run gets ResourceLimits (time + memory) from construction.
 
-Limits of the tier (documented in docs/design/hub.md): Python subset (no full
+Limits of the tier: Python subset (no full
 stdlib), no network/FS unless granted, subprocess-level isolation (weaker
 than a VM against a Rust-level escape — evaluate for production).
 """

@@ -14,7 +14,7 @@ Shipped engines:
 Binding a decision service (OpenFGA/SpiceDB) means implementing the same
 Protocol — ``check`` → Check API, ``access_filter`` → ListObjects — and
 installing it with ``configure_policy_engine()`` during lifespan. Hub code
-does not change. See docs/design/hub.md.
+does not change.
 """
 
 import asyncio

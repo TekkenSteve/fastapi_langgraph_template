@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class HubSettings(BaseSettings):
-    """Skill/MCP hub knobs (see docs/design/hub.md).
+    """Skill/MCP hub knobs.
 
     MCP_USER_ALLOWED_DOMAINS is a comma-separated host allowlist for
     user-tier MCP connections; empty means unrestricted (template default —

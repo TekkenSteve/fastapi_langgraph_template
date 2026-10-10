@@ -128,7 +128,8 @@ An **application-layer** domain package (same tier as `src/shop`/`src/ml`), not 
 of the protocol server: routes register through `http_app.py`, tables migrate through
 its own alembic chain (`src/hub/migrations`, `alembic_version_hub` — never the
 framework chain), and graphs import its loaders directly. Three trust tiers, user
-overriding registry overriding builtin — full design in `docs/design/hub.md`.
+overriding registry overriding builtin — `src/hub/` is the source of truth (the
+code and its docstrings carry the design; there is no separate design document).
 Rules that keep it safe:
 
 - **The framework keeps only ports.** `auth/policy.py` (policy engine, typed

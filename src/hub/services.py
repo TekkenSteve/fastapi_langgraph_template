@@ -236,7 +236,7 @@ class McpConnectionService:
     async def create(self, payload: McpConnectionCreate) -> McpConnectionView:
         """Register a new connection. Name collisions with the deployment
         registry are allowed on purpose — the user connection wins at resolve
-        time (user > registry precedence, docs/design/hub.md)."""
+        time (user > registry precedence)."""
         await self._validate(payload.name, payload.url)
         await self._policy.require(
             self._user,

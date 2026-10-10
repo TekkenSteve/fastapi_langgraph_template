@@ -9,7 +9,7 @@ Model: `langgraph.json` declares which MCP servers exist (top-level
 ``with_mcp_tools`` returns a plain async factory — the framework loads
 it like any other factory and needs zero MCP knowledge.
 
-Trust tiers (docs/design/hub.md), highest precedence first:
+Trust tiers, highest precedence first:
 - user: connections from the injected ``connection_provider`` — applied
   when ``user_scoped=True`` and the run carries a ``user_id``; only names
   the graph declared are resolved, so users can never inject a server the
