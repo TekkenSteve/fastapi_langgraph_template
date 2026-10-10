@@ -80,6 +80,10 @@ class McpConnection(Base):
     # none = no credentials, headers = static headers, oauth = SDK-driven flow
     auth_type: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'none'"))
     headers: Mapped[dict | None] = mapped_column(EncryptedJson, nullable=True)
+    # Tool allowlist: NULL = every tool the server exposes. Narrowing applies to
+    # both the model-facing list and the Apps host proxy — an allowlist the UI
+    # can bypass would be a false sense of safety.
+    allowed_tools: Mapped[list | None] = mapped_column(JsonbSafe, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, server_default=text("true"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))

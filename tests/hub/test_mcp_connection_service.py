@@ -31,6 +31,7 @@ def _row(owner: str, name: str, **overrides: Any) -> SimpleNamespace:
         "url": PUBLIC_URL,
         "auth_type": "none",
         "headers": {},
+        "allowed_tools": None,
         "enabled": True,
         "created_at": NOW,
         "updated_at": NOW,
@@ -52,9 +53,25 @@ class FakeConnectionRepo:
         return self.rows.get((owner_id, name))
 
     async def insert(
-        self, owner_id: str, name: str, *, transport: str, url: str, auth_type: str, headers: dict[str, str]
+        self,
+        owner_id: str,
+        name: str,
+        *,
+        transport: str,
+        url: str,
+        auth_type: str,
+        headers: dict[str, str],
+        allowed_tools: list[str] | None = None,
     ) -> Any:
-        row = _row(owner_id, name, transport=transport, url=url, auth_type=auth_type, headers=headers)
+        row = _row(
+            owner_id,
+            name,
+            transport=transport,
+            url=url,
+            auth_type=auth_type,
+            headers=headers,
+            allowed_tools=allowed_tools,
+        )
         self.rows[(owner_id, name)] = row
         return row
 
@@ -100,8 +117,19 @@ def _purge_oauth_state(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     return purge
 
 
-def _create(name: str = "acme-kb", url: str = PUBLIC_URL, headers: dict[str, str] | None = None) -> McpConnectionCreate:
-    return McpConnectionCreate(name=name, url=url, auth_type="headers" if headers else "none", headers=headers or {})
+def _create(
+    name: str = "acme-kb",
+    url: str = PUBLIC_URL,
+    headers: dict[str, str] | None = None,
+    allowed_tools: list[str] | None = None,
+) -> McpConnectionCreate:
+    return McpConnectionCreate(
+        name=name,
+        url=url,
+        auth_type="headers" if headers else "none",
+        headers=headers or {},
+        allowed_tools=allowed_tools,
+    )
 
 
 async def test_create_returns_masked_view() -> None:
@@ -354,3 +382,30 @@ class TestHostProxy:
 
         assert exc.value.status_code == 403
         call.assert_not_awaited()
+
+
+async def test_create_stores_and_returns_the_allowlist() -> None:
+    view = await _service(FakeConnectionRepo()).create(_create(allowed_tools=["kb_search", "kb_read"]))
+
+    assert view.allowed_tools == ["kb_search", "kb_read"]
+
+
+async def test_update_clears_the_allowlist_with_an_empty_list() -> None:
+    repo = FakeConnectionRepo()
+    service = _service(repo)
+    await service.create(_create(allowed_tools=["kb_search"]))
+
+    view = await service.update("acme-kb", McpConnectionUpdate(allowed_tools=[]))
+
+    assert view.allowed_tools is None
+
+
+async def test_update_leaves_the_allowlist_alone_when_absent() -> None:
+    repo = FakeConnectionRepo()
+    service = _service(repo)
+    await service.create(_create(allowed_tools=["kb_search"]))
+
+    view = await service.update("acme-kb", McpConnectionUpdate(enabled=False))
+
+    assert view.allowed_tools == ["kb_search"]
+    assert view.enabled is False

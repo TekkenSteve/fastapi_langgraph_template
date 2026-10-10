@@ -7,6 +7,7 @@ Graphs import these directly (same pattern as importing ``shop.backends``).
 
 from sqlalchemy import select
 
+from agent_server.repo.graphs.mcp_loader import McpConnectionSpec
 from agent_server.repo.orm import get_session_maker
 from hub.db import McpConnection as McpConnectionORM
 from hub.db import SkillFile as SkillFileORM
@@ -36,7 +37,7 @@ async def load_user_skill_contents(user_id: str) -> list[dict]:
     return [{"name": s.name, "files": by_skill.get(s.skill_id, {})} for s in skills]
 
 
-async def load_connection_map(user_id: str) -> dict[str, dict | None]:
+async def load_connection_map(user_id: str) -> dict[str, McpConnectionSpec | None]:
     """Graph-side loader: the caller's connections as a langchain-mcp-adapters map.
 
     A **disabled** connection is an explicit ``None`` block rather than an
@@ -51,7 +52,7 @@ async def load_connection_map(user_id: str) -> dict[str, dict | None]:
     async with maker() as session:
         rows = await session.execute(select(McpConnectionORM).where(McpConnectionORM.user_id == user_id))
         connections = rows.scalars().all()
-    result: dict[str, dict | None] = {}
+    result: dict[str, McpConnectionSpec | None] = {}
     for r in connections:
         if not r.enabled:
             result[r.name] = None
@@ -63,5 +64,7 @@ async def load_connection_map(user_id: str) -> dict[str, dict | None]:
             conn["auth"] = build_oauth_auth(r.user_id, r.name, r.url)
         elif r.auth_type == "headers" and r.headers:
             conn["headers"] = r.headers
-        result[r.name] = conn
+        # The allowlist rides with the connection so the model-facing tool list
+        # is narrowed too, not just the host proxy.
+        result[r.name] = McpConnectionSpec.of(conn, r.allowed_tools)
     return result

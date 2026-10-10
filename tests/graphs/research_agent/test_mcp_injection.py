@@ -97,6 +97,7 @@ def test_a_users_own_connection_wins_over_the_deployment_registry(monkeypatch: p
         url="https://user.example.com/kb",
         auth_type="none",
         headers={},
+        allowed_tools=None,
         enabled=True,
     )
     captured = _user_connections(monkeypatch, [row])
@@ -104,7 +105,9 @@ def test_a_users_own_connection_wins_over_the_deployment_registry(monkeypatch: p
     built = asyncio.run(graph({"configurable": {"user_id": "u1"}}))
 
     assert built is not None
-    assert captured == [{"acme-kb": {"transport": "streamable_http", "url": "https://user.example.com/kb"}}]
+    assert [spec.connection for spec in captured[0].values()] == [
+        {"transport": "streamable_http", "url": "https://user.example.com/kb"}
+    ]
 
 
 def test_a_user_without_connections_falls_back_to_the_registry(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -114,7 +117,7 @@ def test_a_user_without_connections_falls_back_to_the_registry(monkeypatch: pyte
 
     asyncio.run(graph({"configurable": {"user_id": "u1"}}))
 
-    assert captured[0]["acme-kb"]["transport"] == "stdio"
+    assert captured[0]["acme-kb"].connection["transport"] == "stdio"
 
 
 def test_a_disabled_user_connection_blocks_the_registry(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -129,6 +132,7 @@ def test_a_disabled_user_connection_blocks_the_registry(monkeypatch: pytest.Monk
         url="https://user.example.com/kb",
         auth_type="none",
         headers={},
+        allowed_tools=None,
         enabled=False,
     )
     captured = _user_connections(monkeypatch, [row])

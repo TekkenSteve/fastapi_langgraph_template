@@ -169,6 +169,7 @@ def _to_view(row: McpConnectionORM) -> McpConnectionView:
         url=row.url,
         auth_type=row.auth_type,
         header_keys=sorted((row.headers or {}).keys()),
+        allowed_tools=row.allowed_tools,
         enabled=row.enabled,
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -253,6 +254,7 @@ class McpConnectionService:
             url=payload.url,
             auth_type=payload.auth_type,
             headers=payload.headers,
+            allowed_tools=payload.allowed_tools,
         )
         logger.info("mcp_connection_created", user=self._user.identity, name=payload.name)
         return _to_view(row)
@@ -277,6 +279,9 @@ class McpConnectionService:
             raise HTTPException(status_code=422, detail=str(e)) from e
         row.auth_type = auth_type
         row.headers = headers or {}
+        if payload.allowed_tools is not None:
+            # [] is the patch's way of saying "clear" — store it as absent.
+            row.allowed_tools = payload.allowed_tools or None
         if payload.enabled is not None:
             row.enabled = payload.enabled
         await self._connections.save(row)

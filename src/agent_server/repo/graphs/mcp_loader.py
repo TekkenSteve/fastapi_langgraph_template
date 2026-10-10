@@ -31,7 +31,8 @@ import os
 import re
 import sys
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
@@ -52,10 +53,38 @@ from agent_server.repo.graphs.mcp_errors import classify_mcp_error
 
 logger = structlog.getLogger(__name__)
 
-# Looks up the caller's user-tier MCP connections (langchain-mcp-adapters
-# connection map). Implemented by the application layer (the hub package) and
-# injected by the graph — the framework only knows the signature.
-ConnectionProvider = Callable[[str], Awaitable[dict[str, Any]]]
+# The resolved form of one server: how to connect, plus what may be used from
+# it. A connection dict alone cannot carry the allowlist — it is handed to
+# langchain-mcp-adapters, which validates its shape — so the two travel together.
+ALLOWED_TOOLS_KEY = "allowed_tools"
+
+
+@dataclass(frozen=True)
+class McpConnectionSpec:
+    """One resolved server endpoint and its tool allowlist."""
+
+    connection: dict[str, Any]
+    allowed_tools: tuple[str, ...] = ()
+
+    @classmethod
+    def of(cls, connection: dict[str, Any], allowed_tools: Sequence[str] | None = None) -> "McpConnectionSpec":
+        """Build a spec, lifting ``allowed_tools`` out of the connection object.
+
+        Every tier may narrow a server (the hub column, the langgraph.json
+        registry entry, the env override); the key is removed from the dict the
+        adapter sees, because its schema does not know that field.
+        """
+        spec = dict(connection)
+        declared = spec.pop(ALLOWED_TOOLS_KEY, None)
+        names = tuple(allowed_tools if allowed_tools is not None else (declared or ()))
+        return cls(connection=spec, allowed_tools=names)
+
+
+# Looks up the caller's user-tier MCP connections, keyed by server name. A
+# ``None`` value is an explicit block (the caller disabled that name).
+# Implemented by the application layer (the hub package) and injected by the
+# graph — the framework only knows the signature.
+ConnectionProvider = Callable[[str], Awaitable[dict[str, McpConnectionSpec | None]]]
 
 
 # Injected from the app layer (main.py): builds the per-invocation authz
@@ -69,12 +98,12 @@ def configure_tool_interceptor_factory(factory: Callable[[str | None], Any]) -> 
     _tool_interceptor_factory = factory
 
 
-def _normalize_command(connections: dict[str, Any]) -> dict[str, Any]:
+def _normalize_command(connections: dict[str, McpConnectionSpec]) -> dict[str, McpConnectionSpec]:
     """``python`` as a stdio command resolves to the current interpreter —
     correct in dev venvs and containers alike (production images have no .venv)."""
-    for conn in connections.values():
-        if isinstance(conn, dict) and conn.get("command") == "python":
-            conn["command"] = sys.executable
+    for spec in connections.values():
+        if spec.connection.get("command") == "python":
+            spec.connection["command"] = sys.executable
     return connections
 
 
@@ -126,7 +155,7 @@ def validate_connection_dict(name: str, conn: dict[str, Any]) -> list[str]:
     return problems
 
 
-def _resolve_registry_entry(name: str) -> dict[str, Any] | None:
+def _resolve_registry_entry(name: str) -> McpConnectionSpec | None:
     """Env override first, then the langgraph.json registry. None if unknown
     or invalid (config errors degrade to a loud warning, never a startup failure)."""
     raw = os.environ.get(f"MCP_SERVER__{name.upper().replace('-', '_')}", "").strip()
@@ -136,7 +165,7 @@ def _resolve_registry_entry(name: str) -> dict[str, Any] | None:
             if isinstance(conn, dict):
                 problems = validate_connection_dict(name, conn)
                 if not problems:
-                    return conn
+                    return McpConnectionSpec.of(conn)
                 # An explicit but broken override must not silently mask the
                 # registry — warn loudly, then fall through to the registry.
                 logger.warning("mcp_env_invalid_connection", server=name, problems=problems)
@@ -152,22 +181,22 @@ def _resolve_registry_entry(name: str) -> dict[str, Any] | None:
     if problems:
         logger.warning("mcp_registry_invalid_connection", server=name, problems=problems)
         return None
-    return conn
+    return McpConnectionSpec.of(conn)
 
 
-def resolve_mcp_connections(server_names: list[str]) -> dict[str, Any]:
+def resolve_mcp_connections(server_names: list[str]) -> dict[str, McpConnectionSpec]:
     """Resolve server names against the deployment tiers (env + registry).
 
     Unknown names are skipped with a warning. For run-scoped resolution
     including user-tier connections, use :func:`aresolve_mcp_connections`.
     """
-    connections: dict[str, Any] = {}
+    connections: dict[str, McpConnectionSpec] = {}
     for name in server_names:
-        conn = _resolve_registry_entry(name)
-        if conn is None:
+        spec = _resolve_registry_entry(name)
+        if spec is None:
             logger.warning("mcp_server_not_in_registry", server=name)
             continue
-        connections[name] = conn
+        connections[name] = spec
     return _normalize_command(connections)
 
 
@@ -176,7 +205,7 @@ async def aresolve_mcp_connections(
     *,
     user_id: str | None = None,
     connection_provider: ConnectionProvider | None = None,
-) -> dict[str, Any]:
+) -> dict[str, McpConnectionSpec]:
     """Resolve server names across all three trust tiers.
 
     User tier (from ``connection_provider``) wins on name match; env override
@@ -188,27 +217,27 @@ async def aresolve_mcp_connections(
     disabled that connection, so the name resolves to nothing rather than
     silently falling back to a deployment server of the same name.
     """
-    user_connections: dict[str, Any] = {}
+    user_connections: dict[str, McpConnectionSpec | None] = {}
     if user_id and connection_provider is not None:
         try:
             user_connections = await connection_provider(user_id)
         except Exception as e:  # user-tier outage degrades to deployment tiers, never breaks a run
             logger.warning("mcp_user_connections_load_failed", user_id=user_id, error=str(e))
 
-    connections: dict[str, Any] = {}
+    connections: dict[str, McpConnectionSpec] = {}
     for name in server_names:
         if name in user_connections:
-            conn = user_connections[name]
-            if conn is None:
+            spec = user_connections[name]
+            if spec is None:
                 logger.info("mcp_user_connection_disabled", server=name)
                 continue
-            connections[name] = conn
+            connections[name] = spec
             continue
-        conn = _resolve_registry_entry(name)
-        if conn is None:
+        spec = _resolve_registry_entry(name)
+        if spec is None:
             logger.warning("mcp_server_not_in_registry", server=name)
             continue
-        connections[name] = conn
+        connections[name] = spec
     return _normalize_command(connections)
 
 
@@ -228,9 +257,13 @@ _breakers: dict[str, Any] = {}
 _breaker_server_names: dict[str, str] = {}
 
 
-def breaker_key(name: str, conn: Any) -> str:
-    """Registry key for one server endpoint (name + spec fingerprint)."""
-    return f"mcp:{name}:{_fingerprint_connections({name: conn})}"
+def breaker_key(name: str, conn: dict[str, Any]) -> str:
+    """Registry key for one server endpoint (name + spec fingerprint).
+
+    The allowlist is deliberately not part of it: the same endpoint failing is
+    the same endpoint failing, whoever narrowed its tools.
+    """
+    return f"mcp:{name}:{_fingerprint_connections({name: McpConnectionSpec.of(conn)})}"
 
 
 async def get_mcp_breaker_states() -> dict[str, dict[str, Any]]:
@@ -260,7 +293,7 @@ def env_override_names() -> list[str]:
     return names
 
 
-def mcp_breaker(name: str, conn: Any) -> Any:
+def mcp_breaker(name: str, conn: dict[str, Any]) -> Any:
     """The CircuitBreaker for one server *endpoint* (created lazily).
 
     Public because the hub's MCP Apps host proxy runs the same endpoint and
@@ -340,6 +373,19 @@ _ILLEGAL_TOOL_NAME_CHARS = re.compile(r"[^a-zA-Z0-9_-]+")
 _MAX_TOOL_NAME_LEN = 64
 
 
+def tool_allowed(tool_name: str, allowed: Sequence[str] | None) -> bool:
+    """Whether *tool_name* survives an allowlist.
+
+    Empty/None means no restriction. An entry matches the exposed name or its
+    suffix after the server prefix (upstreams are created with
+    ``tool_name_prefix=True``, so a user writes either ``server_tool`` or
+    ``tool`` — refusing the short form would be surprising, not safer).
+    """
+    if not allowed:
+        return True
+    return any(tool_name == entry or tool_name.endswith(f"_{entry}") for entry in allowed)
+
+
 def sanitize_tool_name(name: str, *, used: set[str] | None = None) -> str:
     """Return a function-calling-safe tool name, unique within *used*.
 
@@ -388,7 +434,7 @@ async def _load_server_tools(name: str, conn: Any, timeout: float, interceptors:
 
 
 async def load_mcp_tools(
-    connections: dict[str, Any],
+    connections: dict[str, McpConnectionSpec],
     *,
     interceptors: list | None = None,
     user_id: str | None = None,
@@ -420,10 +466,10 @@ async def load_mcp_tools(
         return []
     timeout = settings.mcp.MCP_LOAD_TIMEOUT_SECS
 
-    async def _guarded_load(name: str, conn: Any) -> list[BaseTool]:
+    async def _guarded_load(name: str, conn: dict[str, Any]) -> list[BaseTool]:
         return await mcp_breaker(name, conn).call(_load_server_tools, name, conn, timeout, interceptors)
 
-    pending = {name: _guarded_load(name, conn) for name, conn in connections.items()}
+    pending = {name: _guarded_load(name, spec.connection) for name, spec in connections.items()}
     results = await asyncio.gather(*pending.values(), return_exceptions=True)
     tools: list[BaseTool] = []
     for name, result in zip(pending, results, strict=True):
@@ -433,6 +479,12 @@ async def load_mcp_tools(
             failure = classify_mcp_error(result, server=name)
             logger.warning("mcp_tools_load_failed", server=name, reason=failure.reason.value, error=failure.message)
             continue
+        allowed = connections[name].allowed_tools
+        if allowed:
+            kept = [tool for tool in result if tool_allowed(tool.name, allowed)]
+            if len(kept) != len(result):
+                logger.info("mcp_tools_allowlisted", server=name, kept=len(kept), loaded=len(result))
+            result = kept
         tools.extend(result)
     if settings.mcp.MCP_APPS_ENABLED:
         tools = filter_model_facing_tools(tools)
@@ -458,11 +510,18 @@ _FINGERPRINT_KEYS = ("transport", "url", "headers", "command", "args", "env")
 _tools_cache: dict[tuple[str, str], tuple[float, list[BaseTool]]] = {}
 
 
-def _fingerprint_connections(connections: dict[str, Any]) -> str:
-    """Stable hash of the connection fields that decide a live MCP session."""
+def _fingerprint_connections(connections: dict[str, McpConnectionSpec]) -> str:
+    """Stable hash of what decides the loaded tool list.
+
+    The allowlist belongs in here: two callers with the same endpoint but
+    different allowlists must not share a cache entry.
+    """
     payload = {
-        name: {key: conn.get(key) for key in _FINGERPRINT_KEYS if key in conn}
-        for name, conn in sorted(connections.items())
+        name: {
+            **{key: spec.connection.get(key) for key in _FINGERPRINT_KEYS if key in spec.connection},
+            ALLOWED_TOOLS_KEY: list(spec.allowed_tools),
+        }
+        for name, spec in sorted(connections.items())
     }
     encoded = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:32]
@@ -479,7 +538,9 @@ def _cache_scope(user_id: str | None) -> str:
     return "shared"
 
 
-async def _cached_load_tools(connections: dict[str, Any], *, user_id: str | None = None) -> list[BaseTool]:
+async def _cached_load_tools(
+    connections: dict[str, McpConnectionSpec], *, user_id: str | None = None
+) -> list[BaseTool]:
     """Load tools for *connections*, served from the (scope, fingerprint) cache."""
     if not connections:
         return []

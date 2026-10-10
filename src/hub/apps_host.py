@@ -29,7 +29,7 @@ from fastapi import HTTPException
 from agent_server.config.settings import settings
 from agent_server.repo.graphs.mcp_apps import ensure_mcp_apps_capability_advertised
 from agent_server.repo.graphs.mcp_errors import classify_mcp_error
-from agent_server.repo.graphs.mcp_loader import mcp_breaker, sanitize_tool_name
+from agent_server.repo.graphs.mcp_loader import mcp_breaker, sanitize_tool_name, tool_allowed
 from hub.db import McpConnection as McpConnectionORM
 from hub.oauth.flow import build_oauth_auth
 
@@ -96,7 +96,7 @@ async def list_tools(connection: McpConnectionORM) -> list[dict[str, Any]]:
     """
 
     async def _list() -> list[dict[str, Any]]:
-        tools = await _client_for(connection).get_tools()
+        tools = [t for t in await _client_for(connection).get_tools() if tool_allowed(t.name, connection.allowed_tools)]
         used: set[str] = set()
         payload: list[dict[str, Any]] = []
         for tool in tools:
@@ -114,19 +114,23 @@ async def list_tools(connection: McpConnectionORM) -> list[dict[str, Any]]:
     return await _run_guarded(connection, _list)
 
 
-def _find_tool(tools: list[Any], tool_name: str) -> Any | None:
+def _find_tool(tools: list[Any], tool_name: str, allowed: list[str] | None) -> Any | None:
     """Resolve a requested name against the server's names and their LLM-safe forms.
 
     Replays the same sequential normalization ``list_tools`` used, so a UI that
     asks for the ``llm_name`` it was handed gets exactly that tool. The suffix
     form stays accepted because ``tool_name_prefix`` upstreams expose
     ``server_tool`` while callers often ask for ``tool``.
+
+    The allowlist is applied here as well as in ``list_tools``: an allowlist the
+    UI could bypass by naming a hidden tool would be worse than none.
     """
     used: set[str] = set()
     for tool in tools:
         llm_name = sanitize_tool_name(tool.name, used=used)
-        if tool_name in (tool.name, llm_name) or tool.name.endswith(f"_{tool_name}"):
-            return tool
+        if tool_name not in (tool.name, llm_name) and not tool.name.endswith(f"_{tool_name}"):
+            continue
+        return tool if tool_allowed(tool.name, allowed) else None
     return None
 
 
@@ -135,7 +139,7 @@ async def call_tool(connection: McpConnectionORM, tool_name: str, args: dict[str
 
     async def _call() -> dict[str, Any] | None:
         tools = await _client_for(connection).get_tools()
-        tool = _find_tool(tools, tool_name)
+        tool = _find_tool(tools, tool_name, connection.allowed_tools)
         if tool is None:
             return None  # returned, not raised: a bad name must not trip the breaker
         result = await tool.ainvoke(args)

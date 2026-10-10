@@ -168,6 +168,8 @@ def validate_skill_files(files: list[SkillFileInput]) -> ParsedSkillMd:
 
 MCP_CONNECTION_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MAX_HEADERS = 20
+MAX_ALLOWED_TOOLS = 100
+MAX_TOOL_NAME_CHARS = 128
 
 USER_TRANSPORT = "streamable_http"
 # The user-tier credential shapes (see McpConnectionCreate).
@@ -191,6 +193,32 @@ def validate_connection_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise McpConnectionValidationError("url must be an absolute http(s) URL")
+
+
+def normalize_allowed_tools(names: list[str] | None) -> list[str] | None:
+    """Clean a tool allowlist; empty means "no restriction" (``None``).
+
+    A stored empty list and a missing column would otherwise mean two different
+    things that behave identically — one representation, one behaviour.
+    """
+    if not names:
+        return None
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in names:
+        name = (raw or "").strip()
+        if not name:
+            raise McpConnectionValidationError("allowed_tools entries must be non-empty tool names")
+        if len(name) > MAX_TOOL_NAME_CHARS:
+            raise McpConnectionValidationError(
+                f"allowed_tools entries must be at most {MAX_TOOL_NAME_CHARS} characters"
+            )
+        if name not in seen:
+            seen.add(name)
+            cleaned.append(name)
+    if len(cleaned) > MAX_ALLOWED_TOOLS:
+        raise McpConnectionValidationError(f"at most {MAX_ALLOWED_TOOLS} allowed tools")
+    return cleaned
 
 
 def validate_auth_type_headers(auth_type: str, headers: dict[str, str]) -> None:
@@ -221,6 +249,9 @@ class McpConnectionCreate(BaseModel):
     url: str
     auth_type: AUTH_TYPE = "none"
     headers: dict[str, str] = Field(default_factory=dict, description="Credentials; write-only, never returned")
+    allowed_tools: list[str] | None = Field(
+        default=None, description="Tools this connection may use; omit or [] for all"
+    )
 
     @field_validator("headers")
     @classmethod
@@ -228,6 +259,11 @@ class McpConnectionCreate(BaseModel):
         if len(v) > MAX_HEADERS:
             raise ValueError(f"at most {MAX_HEADERS} headers")
         return v
+
+    @field_validator("allowed_tools")
+    @classmethod
+    def _clean_allowed_tools(cls, v: list[str] | None) -> list[str] | None:
+        return normalize_allowed_tools(v)
 
     @model_validator(mode="after")
     def _auth_type_matches_headers(self) -> "McpConnectionCreate":
@@ -237,12 +273,25 @@ class McpConnectionCreate(BaseModel):
 
 class McpConnectionUpdate(BaseModel):
     """Patch payload. ``headers`` (and ``auth_type``) replace the stored pair;
-    the service validates the resulting combination, not just the patch."""
+    the service validates the resulting combination, not just the patch.
+
+    ``allowed_tools`` follows the same rule as the other fields (absent = leave
+    alone) with one addition: ``[]`` clears the allowlist, because JSON has no
+    other way to say "no list" distinctly from "not mentioned".
+    """
 
     url: str | None = None
     auth_type: AUTH_TYPE | None = None
     headers: dict[str, str] | None = None
+    allowed_tools: list[str] | None = None
     enabled: bool | None = None
+
+    @field_validator("allowed_tools")
+    @classmethod
+    def _clean_allowed_tools(cls, v: list[str] | None) -> list[str] | None:
+        # Unlike create, [] carries meaning here ("clear the allowlist"), so it
+        # must survive normalization as an empty list rather than becoming None.
+        return None if v is None else (normalize_allowed_tools(v) or [])
 
 
 class McpConnectionView(BaseModel):
@@ -253,6 +302,7 @@ class McpConnectionView(BaseModel):
     url: str
     auth_type: str
     header_keys: list[str]
+    allowed_tools: list[str] | None = None
     enabled: bool
     created_at: datetime
     updated_at: datetime

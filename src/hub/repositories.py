@@ -117,7 +117,15 @@ class McpConnectionRepository(Protocol):
     async def get_for_owner(self, owner_id: str, name: str) -> McpConnectionORM | None: ...
 
     async def insert(
-        self, owner_id: str, name: str, *, transport: str, url: str, auth_type: str, headers: dict[str, str]
+        self,
+        owner_id: str,
+        name: str,
+        *,
+        transport: str,
+        url: str,
+        auth_type: str,
+        headers: dict[str, str],
+        allowed_tools: list[str] | None = None,
     ) -> McpConnectionORM:
         """Insert a new connection. Commits."""
         ...
@@ -150,7 +158,15 @@ class SqlAlchemyMcpConnectionRepository:
         return row.scalar_one_or_none()
 
     async def insert(
-        self, owner_id: str, name: str, *, transport: str, url: str, auth_type: str, headers: dict[str, str]
+        self,
+        owner_id: str,
+        name: str,
+        *,
+        transport: str,
+        url: str,
+        auth_type: str,
+        headers: dict[str, str],
+        allowed_tools: list[str] | None = None,
     ) -> McpConnectionORM:
         row = McpConnectionORM(
             user_id=owner_id,
@@ -159,6 +175,7 @@ class SqlAlchemyMcpConnectionRepository:
             url=url,
             auth_type=auth_type,
             headers=headers,
+            allowed_tools=allowed_tools,
             enabled=True,
         )
         self._session.add(row)

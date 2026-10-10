@@ -7,6 +7,7 @@ import pytest
 
 import agent_server.repo.graphs.mcp_loader as loader
 from agent_server.repo.graphs.mcp_loader import (
+    McpConnectionSpec,
     clear_mcp_tools_cache,
     load_mcp_tools,
     resolve_mcp_connections,
@@ -34,17 +35,17 @@ def test_unknown_server_name_skipped_with_warning() -> None:
 
 
 def test_python_command_resolves_to_current_interpreter() -> None:
-    assert resolve_mcp_connections(["acme-kb"])["acme-kb"]["command"] == sys.executable
+    assert resolve_mcp_connections(["acme-kb"])["acme-kb"].connection["command"] == sys.executable
 
 
 def test_env_override_replaces_registry_entry(monkeypatch) -> None:
     monkeypatch.setenv("MCP_SERVER__ACME_KB", '{"transport": "stdio", "command": "true"}')
-    assert resolve_mcp_connections(["acme-kb"]) == {"acme-kb": {"transport": "stdio", "command": "true"}}
+    assert resolve_mcp_connections(["acme-kb"])["acme-kb"].connection == {"transport": "stdio", "command": "true"}
 
 
 def test_invalid_env_falls_back_to_registry(monkeypatch) -> None:
     monkeypatch.setenv("MCP_SERVER__ACME_KB", "not-json")
-    assert resolve_mcp_connections(["acme-kb"])["acme-kb"]["command"] == sys.executable
+    assert resolve_mcp_connections(["acme-kb"])["acme-kb"].connection["command"] == sys.executable
 
 
 async def test_empty_loads_nothing() -> None:
@@ -52,7 +53,10 @@ async def test_empty_loads_nothing() -> None:
 
 
 async def test_unreachable_server_degrades_gracefully() -> None:
-    assert await load_mcp_tools({"nope": {"transport": "stdio", "command": "false", "args": []}}) == []
+    assert (
+        await load_mcp_tools({"nope": McpConnectionSpec.of({"transport": "stdio", "command": "false", "args": []})})
+        == []
+    )
 
 
 async def test_wrapper_resolves_and_builds() -> None:
@@ -109,5 +113,5 @@ async def test_hanging_server_times_out_not_stalls(monkeypatch) -> None:
     from langchain_mcp_adapters.client import MultiServerMCPClient
 
     monkeypatch.setattr(MultiServerMCPClient, "get_tools", _hang)
-    tools = await load_mcp_tools({"hung": {"transport": "stdio", "command": "true"}})
+    tools = await load_mcp_tools({"hung": McpConnectionSpec.of({"transport": "stdio", "command": "true"})})
     assert tools == []

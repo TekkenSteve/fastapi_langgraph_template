@@ -4,8 +4,11 @@ import pytest
 from pydantic import ValidationError
 
 from hub.models import (
+    MAX_ALLOWED_TOOLS,
     McpConnectionCreate,
+    McpConnectionUpdate,
     McpConnectionValidationError,
+    normalize_allowed_tools,
     validate_connection_name,
     validate_connection_url,
 )
@@ -68,3 +71,38 @@ def test_static_headers_rejected_for_other_auth_types() -> None:
 def test_oauth_auth_type_accepted_without_headers() -> None:
     conn = McpConnectionCreate(name="ok", url="https://x.com", auth_type="oauth")
     assert conn.auth_type == "oauth"
+
+
+# --- tool allowlist -----------------------------------------------------------
+
+
+def test_absent_or_empty_allowlist_means_no_restriction() -> None:
+    """One representation, one behaviour: there is no "allow nothing" state."""
+    assert normalize_allowed_tools(None) is None
+    assert normalize_allowed_tools([]) is None
+    assert McpConnectionCreate(name="ok", url="https://x.com").allowed_tools is None
+
+
+def test_allowlist_is_cleaned_and_deduped() -> None:
+    cleaned = normalize_allowed_tools([" keep ", "keep", "other"])
+
+    assert cleaned == ["keep", "other"]
+
+
+def test_allowlist_rejects_blank_and_overlong_entries() -> None:
+    with pytest.raises(McpConnectionValidationError, match="non-empty"):
+        normalize_allowed_tools(["  "])
+    with pytest.raises(McpConnectionValidationError, match="at most 128"):
+        normalize_allowed_tools(["x" * 129])
+
+
+def test_allowlist_is_capped() -> None:
+    with pytest.raises(McpConnectionValidationError, match=str(MAX_ALLOWED_TOOLS)):
+        normalize_allowed_tools([f"tool{i}" for i in range(MAX_ALLOWED_TOOLS + 1)])
+
+
+def test_update_can_clear_the_allowlist_with_an_empty_list() -> None:
+    """JSON cannot say "no list" distinctly from "not mentioned", so [] clears."""
+    assert McpConnectionUpdate(allowed_tools=[]).allowed_tools == []
+    assert McpConnectionUpdate().allowed_tools is None
+    assert McpConnectionUpdate(allowed_tools=[" a ", "a"]).allowed_tools == ["a"]

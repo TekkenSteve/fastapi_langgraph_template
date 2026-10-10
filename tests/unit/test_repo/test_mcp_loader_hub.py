@@ -7,6 +7,7 @@ import pytest
 
 import agent_server.repo.graphs.mcp_loader as loader
 from agent_server.repo.graphs.mcp_loader import (
+    McpConnectionSpec,
     aresolve_mcp_connections,
     clear_mcp_tools_cache,
     with_mcp_tools,
@@ -34,7 +35,7 @@ def _registry(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _provider(mapping: dict[str, Any]) -> loader.ConnectionProvider:
     async def _load(user_id: str) -> dict[str, Any]:
-        return dict(mapping)
+        return {name: None if spec is None else McpConnectionSpec.of(spec) for name, spec in mapping.items()}
 
     return _load
 
@@ -43,7 +44,7 @@ async def test_user_connection_overrides_registry_entry() -> None:
     resolved = await aresolve_mcp_connections(
         ["acme-kb"], user_id="u1", connection_provider=_provider(_USER_CONNECTIONS)
     )
-    assert resolved["acme-kb"] == _USER_CONNECTIONS["acme-kb"]
+    assert resolved["acme-kb"].connection == _USER_CONNECTIONS["acme-kb"]
 
 
 async def test_undeclared_user_connection_is_never_injected() -> None:
@@ -59,14 +60,14 @@ async def test_user_connection_supplies_name_absent_from_registry() -> None:
     resolved = await aresolve_mcp_connections(
         ["other-kb"], user_id="u1", connection_provider=_provider(_USER_CONNECTIONS)
     )
-    assert resolved["other-kb"] == _USER_CONNECTIONS["other-kb"]
+    assert resolved["other-kb"].connection == _USER_CONNECTIONS["other-kb"]
 
 
 async def test_no_provider_means_no_user_tier() -> None:
     """Even with a user_id, without a provider resolution stays on the
     deployment tiers — the framework has no user-tier knowledge of its own."""
     resolved = await aresolve_mcp_connections(["acme-kb"], user_id="u1")
-    assert resolved["acme-kb"]["transport"] == "stdio"
+    assert resolved["acme-kb"].connection["transport"] == "stdio"
 
 
 async def test_provider_failure_degrades_to_registry() -> None:
@@ -74,7 +75,7 @@ async def test_provider_failure_degrades_to_registry() -> None:
         raise ConnectionError("db down")
 
     resolved = await aresolve_mcp_connections(["acme-kb"], user_id="u1", connection_provider=_boom)
-    assert resolved["acme-kb"]["transport"] == "stdio"
+    assert resolved["acme-kb"].connection["transport"] == "stdio"
 
 
 async def test_env_override_loses_to_user_tier(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -82,7 +83,7 @@ async def test_env_override_loses_to_user_tier(monkeypatch: pytest.MonkeyPatch) 
     resolved = await aresolve_mcp_connections(
         ["acme-kb"], user_id="u1", connection_provider=_provider(_USER_CONNECTIONS)
     )
-    assert resolved["acme-kb"] == _USER_CONNECTIONS["acme-kb"]
+    assert resolved["acme-kb"].connection == _USER_CONNECTIONS["acme-kb"]
 
 
 async def test_with_mcp_tools_default_wraps_as_zero_arg_factory() -> None:
@@ -115,7 +116,7 @@ async def test_user_scoped_loads_are_cached_per_resolved_spec(monkeypatch: pytes
     async def _fake_resolve(
         names: list[str], *, user_id: str | None = None, connection_provider: Any = None
     ) -> dict[str, Any]:
-        return {"acme-kb": _USER_CONNECTIONS["acme-kb"]}
+        return {"acme-kb": McpConnectionSpec.of(_USER_CONNECTIONS["acme-kb"])}
 
     async def _fake_load(connections: dict[str, Any], *, user_id: str | None = None, interceptors: Any = None) -> list:
         nonlocal loads
@@ -145,12 +146,12 @@ async def test_a_changed_connection_spec_invalidates_the_cache_before_the_ttl(
     async def _fake_resolve(
         names: list[str], *, user_id: str | None = None, connection_provider: Any = None
     ) -> dict[str, Any]:
-        return {"acme-kb": dict(spec)}
+        return {"acme-kb": McpConnectionSpec.of(dict(spec))}
 
     async def _fake_load(connections: dict[str, Any], *, user_id: str | None = None, interceptors: Any = None) -> list:
         nonlocal loads
         loads += 1
-        return [connections["acme-kb"]["url"]]
+        return [connections["acme-kb"].connection["url"]]
 
     monkeypatch.setattr(loader, "aresolve_mcp_connections", _fake_resolve)
     monkeypatch.setattr(loader, "load_mcp_tools", _fake_load)
@@ -175,7 +176,11 @@ async def test_different_resolved_specs_cache_separately(monkeypatch: pytest.Mon
     async def _fake_resolve(
         names: list[str], *, user_id: str | None = None, connection_provider: Any = None
     ) -> dict[str, Any]:
-        return {"acme-kb": {"transport": "streamable_http", "url": f"https://{user_id}.example.com/mcp"}}
+        return {
+            "acme-kb": McpConnectionSpec.of(
+                {"transport": "streamable_http", "url": f"https://{user_id}.example.com/mcp"}
+            )
+        }
 
     async def _fake_load(connections: dict[str, Any], *, user_id: str | None = None, interceptors: Any = None) -> list:
         nonlocal loads
@@ -201,7 +206,7 @@ async def test_authz_mode_does_not_share_cached_tools_across_users(monkeypatch: 
     async def _fake_resolve(
         names: list[str], *, user_id: str | None = None, connection_provider: Any = None
     ) -> dict[str, Any]:
-        return {"acme-kb": _USER_CONNECTIONS["acme-kb"]}
+        return {"acme-kb": McpConnectionSpec.of(_USER_CONNECTIONS["acme-kb"])}
 
     async def _fake_load(connections: dict[str, Any], *, user_id: str | None = None, interceptors: Any = None) -> list:
         nonlocal loads
@@ -249,7 +254,7 @@ async def test_user_scoped_cache_expires(monkeypatch: pytest.MonkeyPatch) -> Non
     async def _fake_resolve(
         names: list[str], *, user_id: str | None = None, connection_provider: Any = None
     ) -> dict[str, Any]:
-        return {"acme-kb": _USER_CONNECTIONS["acme-kb"]}
+        return {"acme-kb": McpConnectionSpec.of(_USER_CONNECTIONS["acme-kb"])}
 
     async def _fake_load(connections: dict[str, Any], *, user_id: str | None = None, interceptors: Any = None) -> list:
         nonlocal loads
@@ -300,7 +305,9 @@ async def test_one_server_failure_costs_only_its_own_tools(monkeypatch: pytest.M
         return _fake_tools(name)
 
     monkeypatch.setattr(loader, "_load_server_tools", fake_load)
-    tools = await loader.load_mcp_tools({"bad": {}, "good": {}})
+    tools = await loader.load_mcp_tools(
+        {name: McpConnectionSpec.of(conn) for name, conn in {"bad": {}, "good": {}}.items()}
+    )
     assert [t.name for t in tools] == ["good"]
 
 
@@ -315,10 +322,10 @@ async def test_breaker_opens_after_threshold_and_skips(monkeypatch: pytest.Monke
     monkeypatch.setattr(loader.settings.mcp, "MCP_BREAKER_THRESHOLD", 3)
 
     for _ in range(3):
-        await loader.load_mcp_tools({"bad": {}})
+        await loader.load_mcp_tools({"bad": McpConnectionSpec.of({})})
     assert calls == ["bad", "bad", "bad"]
 
-    await loader.load_mcp_tools({"bad": {}})
+    await loader.load_mcp_tools({"bad": McpConnectionSpec.of({})})
     assert calls == ["bad", "bad", "bad"]  # open — fast-failed, no attempt
 
 
@@ -334,12 +341,12 @@ async def test_breaker_resets_on_success(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(loader.settings.mcp, "MCP_BREAKER_THRESHOLD", 2)
     monkeypatch.setattr(loader.settings.mcp, "MCP_BREAKER_COOLDOWN_SECS", -1.0)  # immediately half-open
 
-    await loader.load_mcp_tools({"bad": {}})
-    await loader.load_mcp_tools({"bad": {}})  # opens
+    await loader.load_mcp_tools({"bad": McpConnectionSpec.of({})})
+    await loader.load_mcp_tools({"bad": McpConnectionSpec.of({})})  # opens
     state["fail"] = False
-    tools = await loader.load_mcp_tools({"bad": {}})  # half-open success
+    tools = await loader.load_mcp_tools({"bad": McpConnectionSpec.of({})})  # half-open success
     assert [t.name for t in tools] == ["bad"]
-    tools = await loader.load_mcp_tools({"bad": {}})
+    tools = await loader.load_mcp_tools({"bad": McpConnectionSpec.of({})})
     assert [t.name for t in tools] == ["bad"]  # closed again
 
 
@@ -375,7 +382,7 @@ async def test_loaded_tools_are_wrapped_with_args_fixer(monkeypatch: pytest.Monk
         return _fake_tools(name)
 
     monkeypatch.setattr(loader, "_load_server_tools", fake_load)
-    tools = await loader.load_mcp_tools({"srv": {}})
+    tools = await loader.load_mcp_tools({"srv": McpConnectionSpec.of({})})
     assert type(tools[0]).__name__ == "_JsonArgsFixedTool"
     assert tools[0].name == "srv"  # identity preserved through the wrapper
 
@@ -401,7 +408,7 @@ async def test_mcp_apps_enabled_filters_app_only_tools(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(loader, "_load_server_tools", fake_load)
     monkeypatch.setattr(loader.settings.mcp, "MCP_APPS_ENABLED", True)
-    tools = await loader.load_mcp_tools({"srv": {}})
+    tools = await loader.load_mcp_tools({"srv": McpConnectionSpec.of({})})
     assert [t.name for t in tools] == ["model-tool"]
 
 
@@ -424,7 +431,7 @@ async def test_tool_authz_interceptor_prepended_with_user(monkeypatch: pytest.Mo
 
     loader.configure_tool_interceptor_factory(lambda uid: PolicyToolInterceptor(LocalPolicyEngine(), uid))
     try:
-        await loader.load_mcp_tools({"srv": {}}, user_id="alice")
+        await loader.load_mcp_tools({"srv": McpConnectionSpec.of({})}, user_id="alice")
     finally:
         loader.configure_tool_interceptor_factory(None)  # type: ignore[arg-type]
 
@@ -440,7 +447,7 @@ async def test_tool_authz_off_by_default(monkeypatch: pytest.MonkeyPatch) -> Non
         return _fake_tools(name)
 
     monkeypatch.setattr(loader, "_load_server_tools", fake_load)
-    await loader.load_mcp_tools({"srv": {}})
+    await loader.load_mcp_tools({"srv": McpConnectionSpec.of({})})
     assert captured["interceptors"] is None
 
 
@@ -487,7 +494,7 @@ def test_env_override_with_invalid_shape_falls_back_to_registry(monkeypatch: pyt
     # registry entry won (its "python" command normalized to the interpreter)
     import sys
 
-    assert resolved["acme-kb"]["command"] == sys.executable
+    assert resolved["acme-kb"].connection["command"] == sys.executable
 
 
 def test_invalid_registry_entry_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -563,7 +570,7 @@ async def test_breakers_are_scoped_per_endpoint_not_per_name(monkeypatch: pytest
     alice = {"transport": "streamable_http", "url": "https://alice.example.com/mcp"}
     bob = {"transport": "streamable_http", "url": "https://bob.example.com/mcp"}
 
-    await loader.load_mcp_tools({"acme-kb": alice})  # opens alice's breaker
+    await loader.load_mcp_tools({"acme-kb": McpConnectionSpec.of(alice)})  # opens alice's breaker
     alice_state = await loader.get_mcp_breaker_states()
 
     assert alice_state["acme-kb"]["open"] is True
@@ -577,10 +584,80 @@ async def test_breakers_are_scoped_per_endpoint_not_per_name(monkeypatch: pytest
         return _fake_tools(name)
 
     monkeypatch.setattr(loader, "_load_server_tools", fake_load_ok)
-    tools = await loader.load_mcp_tools({"acme-kb": bob})
+    tools = await loader.load_mcp_tools({"acme-kb": McpConnectionSpec.of(bob)})
 
     assert calls == ["https://bob.example.com/mcp"]
     assert [t.name for t in tools] == ["acme-kb"]
+
+
+# --- tool allowlists -----------------------------------------------------------
+
+
+def test_a_spec_lifts_the_allowlist_out_of_the_connection_object() -> None:
+    """The adapter validates its connection schema, so the key must not reach it."""
+    spec = McpConnectionSpec.of({"transport": "stdio", "command": "true", "allowed_tools": ["a", "b"]})
+
+    assert spec.connection == {"transport": "stdio", "command": "true"}
+    assert spec.allowed_tools == ("a", "b")
+
+
+async def test_the_allowlist_narrows_the_model_facing_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_load(name: str, conn: dict, timeout: float, interceptors: Any) -> list:
+        return [*_fake_tools("keep"), *_fake_tools("drop")]
+
+    monkeypatch.setattr(loader, "_load_server_tools", fake_load)
+
+    tools = await loader.load_mcp_tools({"srv": McpConnectionSpec.of({}, ["keep"])})
+
+    assert [t.name for t in tools] == ["keep"]
+
+
+async def test_the_allowlist_is_part_of_the_cache_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Same endpoint, different allowlists: sharing a cache entry would leak tools."""
+    loads = 0
+
+    async def fake_load(name: str, conn: dict, timeout: float, interceptors: Any) -> list:
+        nonlocal loads
+        loads += 1
+        return [*_fake_tools("keep"), *_fake_tools("drop")]
+
+    monkeypatch.setattr(loader, "_load_server_tools", fake_load)
+
+    narrowed = await loader.load_mcp_tools({"srv": McpConnectionSpec.of({}, ["keep"])})
+    everything = await loader.load_mcp_tools({"srv": McpConnectionSpec.of({})})
+
+    assert loads == 2
+    assert [t.name for t in narrowed] == ["keep"]
+    assert [t.name for t in everything] == ["keep", "drop"]
+
+
+def test_a_deployment_entry_can_narrow_a_server_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Narrowing is not a user-tier-only idea: ops may pin a server's tools."""
+    monkeypatch.setenv(
+        "MCP_SERVER__ACME_KB",
+        '{"transport": "stdio", "command": "true", "allowed_tools": ["kb_search"]}',
+    )
+
+    spec = loader.resolve_mcp_connections(["acme-kb"])["acme-kb"]
+
+    assert spec.allowed_tools == ("kb_search",)
+    assert spec.connection == {"transport": "stdio", "command": "true"}
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "allowed", "expected"),
+    [
+        ("srv_keep", ["keep"], True),  # the short form a user would write
+        ("srv_keep", ["srv_keep"], True),  # the exposed form
+        ("srv_other", ["keep"], False),
+        ("srv_keep", None, True),  # no allowlist = no restriction
+        ("srv_keep", [], True),
+    ],
+)
+def test_allowlist_matching_accepts_the_short_and_prefixed_form(
+    tool_name: str, allowed: list[str] | None, expected: bool
+) -> None:
+    assert loader.tool_allowed(tool_name, allowed) is expected
 
 
 # --- LLM-safe tool names -------------------------------------------------------
@@ -619,7 +696,7 @@ async def test_load_exposes_llm_safe_names_and_keeps_the_originals(monkeypatch: 
 
     monkeypatch.setattr(loader, "_load_server_tools", fake_load)
 
-    tools = await loader.load_mcp_tools({"srv": {}})
+    tools = await loader.load_mcp_tools({"srv": McpConnectionSpec.of({})})
 
     assert [t.name for t in tools] == ["search_kb", "plain"]
     assert tools[0].metadata == {"original_tool_name": "search.kb"}

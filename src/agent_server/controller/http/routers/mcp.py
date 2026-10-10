@@ -45,6 +45,7 @@ class McpServerStatus(BaseModel):
     error: str | None = None
     reason: str | None = None  # classified failure (mcp_errors.McpFailureReason)
     resource_metadata: str | None = None  # OAuth protected-resource metadata URL, when advertised
+    allowed_tools: list[str] | None = None  # tool allowlist; None = every tool the server exposes
     source: str = "registry"  # "registry" | "env" (supplied by MCP_SERVER__* only)
     breaker: str | None = None  # None = never loaded | "closed" | "open (Ns remaining)"
 
@@ -65,8 +66,8 @@ async def list_mcp_servers() -> list[McpServerStatus]:
         if breaker is not None:
             breaker_label = f"open ({breaker['open_for_secs']}s remaining)" if breaker["open"] else "closed"
         source = "env" if name in env_only else "registry"
-        conn = connections.get(name)
-        if conn is None:
+        spec = connections.get(name)
+        if spec is None:
             # Distinguish "unknown name" from "known but invalid config" so the
             # operator sees the config problem, not a doomed handshake.
             raw = registry.get(name)
@@ -83,11 +84,17 @@ async def list_mcp_servers() -> list[McpServerStatus]:
                 source=source,
                 breaker=breaker_label,
             )
+        narrowed = list(spec.allowed_tools) or None
         try:
             async with asyncio.timeout(_PROBE_TIMEOUT_SECS):
-                tools = await _load_server_tools(name, conn, _PROBE_TIMEOUT_SECS, None)
+                tools = await _load_server_tools(name, spec.connection, _PROBE_TIMEOUT_SECS, None)
             return McpServerStatus(
-                name=name, status="ok", tools=[t.name for t in tools], source=source, breaker=breaker_label
+                name=name,
+                status="ok",
+                tools=[t.name for t in tools],
+                allowed_tools=narrowed,
+                source=source,
+                breaker=breaker_label,
             )
         except Exception as e:
             failure = classify_mcp_error(e, server=name)
@@ -97,6 +104,7 @@ async def list_mcp_servers() -> list[McpServerStatus]:
                 error=failure.message,
                 reason=failure.reason.value,
                 resource_metadata=failure.resource_metadata,
+                allowed_tools=narrowed,
                 source=source,
                 breaker=breaker_label,
             )

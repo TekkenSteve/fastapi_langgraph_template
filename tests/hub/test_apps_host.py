@@ -43,6 +43,7 @@ def _row(**overrides: Any) -> SimpleNamespace:
         "url": "https://mcp.example.com/kb",
         "auth_type": "none",
         "headers": {},
+        "allowed_tools": None,
         "enabled": True,
     }
     defaults.update(overrides)
@@ -89,6 +90,35 @@ async def test_transport_failure_is_502_and_counts_against_the_breaker(monkeypat
     assert exc.value.detail["reason"] == "unreachable"
     state = (await loader.get_mcp_breaker_states())["acme-kb"]
     assert state["open"] is True
+
+
+async def test_list_tools_hides_tools_outside_the_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An allowlist the UI can see past would be a false sense of safety."""
+    monkeypatch.setattr(apps_host, "_client_for", lambda _row: _Client([_Tool("allowed_tool"), _Tool("other_tool")]))
+
+    tools = await apps_host.list_tools(_row(allowed_tools=["allowed_tool"]))
+
+    assert [t["name"] for t in tools] == ["allowed_tool"]
+
+
+async def test_call_tool_refuses_a_tool_outside_the_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Naming a hidden tool explicitly must not work either."""
+    invoked: list[dict[str, Any]] = []
+
+    class _Recording(_Tool):
+        async def ainvoke(self, args: dict[str, Any]) -> dict[str, Any]:
+            invoked.append(args)
+            return {"ok": args}
+
+    monkeypatch.setattr(
+        apps_host, "_client_for", lambda _row: _Client([_Recording("allowed_tool"), _Recording("other_tool")])
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await apps_host.call_tool(_row(allowed_tools=["allowed_tool"]), "other_tool", {})
+
+    assert exc.value.status_code == 404
+    assert invoked == []
 
 
 async def test_a_rejected_credential_asks_the_caller_to_reauthorize(monkeypatch: pytest.MonkeyPatch) -> None:

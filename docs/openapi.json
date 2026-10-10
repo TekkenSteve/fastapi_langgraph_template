@@ -4988,6 +4988,21 @@
             "type": "object",
             "title": "Headers",
             "description": "Credentials; write-only, never returned"
+          },
+          "allowed_tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Tools",
+            "description": "Tools this connection may use; omit or [] for all"
           }
         },
         "type": "object",
@@ -5041,6 +5056,20 @@
             ],
             "title": "Headers"
           },
+          "allowed_tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Tools"
+          },
           "enabled": {
             "anyOf": [
               {
@@ -5055,7 +5084,7 @@
         },
         "type": "object",
         "title": "McpConnectionUpdate",
-        "description": "Patch payload. ``headers`` (and ``auth_type``) replace the stored pair;\nthe service validates the resulting combination, not just the patch."
+        "description": "Patch payload. ``headers`` (and ``auth_type``) replace the stored pair;\nthe service validates the resulting combination, not just the patch.\n\n``allowed_tools`` follows the same rule as the other fields (absent = leave\nalone) with one addition: ``[]`` clears the allowlist, because JSON has no\nother way to say \"no list\" distinctly from \"not mentioned\"."
       },
       "McpConnectionView": {
         "properties": {
@@ -5081,6 +5110,20 @@
             },
             "type": "array",
             "title": "Header Keys"
+          },
+          "allowed_tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Tools"
           },
           "enabled": {
             "type": "boolean",
@@ -5161,6 +5204,20 @@
               }
             ],
             "title": "Resource Metadata"
+          },
+          "allowed_tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Tools"
           },
           "source": {
             "type": "string",
