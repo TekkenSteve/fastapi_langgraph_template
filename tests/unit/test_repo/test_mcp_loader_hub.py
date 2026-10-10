@@ -7,7 +7,7 @@ import pytest
 import agent_server.repo.graphs.mcp_loader as loader
 from agent_server.repo.graphs.mcp_loader import (
     aresolve_mcp_connections,
-    clear_user_tools_cache,
+    clear_mcp_tools_cache,
     with_mcp_tools,
 )
 
@@ -28,7 +28,7 @@ _USER_CONNECTIONS: dict[str, Any] = {
 @pytest.fixture(autouse=True)
 def _registry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(loader, "load_mcp_servers_config", lambda: dict(_REGISTRY))
-    clear_user_tools_cache()
+    clear_mcp_tools_cache()
 
 
 def _provider(mapping: dict[str, Any]) -> loader.ConnectionProvider:
@@ -107,16 +107,18 @@ async def test_user_scoped_factory_takes_config_for_per_request_dispatch() -> No
     assert list(inspect.signature(factory).parameters) == ["config"]
 
 
-async def test_user_scoped_loads_are_cached_per_user_and_servers(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[str | None] = []
+async def test_user_scoped_loads_are_cached_per_resolved_spec(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two runs resolving the same connection spec share one handshake."""
+    loads = 0
 
     async def _fake_resolve(
         names: list[str], *, user_id: str | None = None, connection_provider: Any = None
     ) -> dict[str, Any]:
-        calls.append(user_id)
-        return {}
+        return {"acme-kb": _USER_CONNECTIONS["acme-kb"]}
 
-    async def _fake_load(connections: dict[str, Any], *, interceptors: Any = None) -> list:
+    async def _fake_load(connections: dict[str, Any], *, user_id: str | None = None, interceptors: Any = None) -> list:
+        nonlocal loads
+        loads += 1
         return ["tool"]
 
     monkeypatch.setattr(loader, "aresolve_mcp_connections", _fake_resolve)
@@ -129,23 +131,132 @@ async def test_user_scoped_loads_are_cached_per_user_and_servers(monkeypatch: py
 
     assert await built(config) == ["tool"]
     assert await built(config) == ["tool"]
-    assert calls == ["u1"]  # second call served from the TTL cache
-
-    await built({"configurable": {"user_id": "u2"}})
-    assert calls == ["u1", "u2"]  # cache key includes the user
+    assert loads == 1
 
 
-async def test_user_scoped_cache_expires(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = 0
+async def test_a_changed_connection_spec_invalidates_the_cache_before_the_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Editing a connection must take effect on the next run, not after the TTL."""
+    spec: dict[str, Any] = {"transport": "streamable_http", "url": "https://a.example.com/mcp"}
+    loads = 0
 
     async def _fake_resolve(
         names: list[str], *, user_id: str | None = None, connection_provider: Any = None
     ) -> dict[str, Any]:
-        nonlocal calls
-        calls += 1
-        return {}
+        return {"acme-kb": dict(spec)}
+
+    async def _fake_load(connections: dict[str, Any], *, user_id: str | None = None, interceptors: Any = None) -> list:
+        nonlocal loads
+        loads += 1
+        return [connections["acme-kb"]["url"]]
 
     monkeypatch.setattr(loader, "aresolve_mcp_connections", _fake_resolve)
+    monkeypatch.setattr(loader, "load_mcp_tools", _fake_load)
+
+    built = with_mcp_tools(
+        lambda mcp_tools: mcp_tools, servers=["acme-kb"], user_scoped=True, connection_provider=_provider({})
+    )
+    config = {"configurable": {"user_id": "u1"}}
+
+    assert await built(config) == ["https://a.example.com/mcp"]
+    assert await built(config) == ["https://a.example.com/mcp"]
+    assert loads == 1
+
+    spec["url"] = "https://b.example.com/mcp"
+    assert await built(config) == ["https://b.example.com/mcp"]
+    assert loads == 2
+
+
+async def test_different_resolved_specs_cache_separately(monkeypatch: pytest.MonkeyPatch) -> None:
+    loads = 0
+
+    async def _fake_resolve(
+        names: list[str], *, user_id: str | None = None, connection_provider: Any = None
+    ) -> dict[str, Any]:
+        return {"acme-kb": {"transport": "streamable_http", "url": f"https://{user_id}.example.com/mcp"}}
+
+    async def _fake_load(connections: dict[str, Any], *, user_id: str | None = None, interceptors: Any = None) -> list:
+        nonlocal loads
+        loads += 1
+        return ["tool"]
+
+    monkeypatch.setattr(loader, "aresolve_mcp_connections", _fake_resolve)
+    monkeypatch.setattr(loader, "load_mcp_tools", _fake_load)
+
+    built = with_mcp_tools(
+        lambda mcp_tools: mcp_tools, servers=["acme-kb"], user_scoped=True, connection_provider=_provider({})
+    )
+
+    await built({"configurable": {"user_id": "u1"}})
+    await built({"configurable": {"user_id": "u2"}})
+    assert loads == 2
+
+
+async def test_authz_mode_does_not_share_cached_tools_across_users(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With per-invocation authz the tools carry user-bound interceptors."""
+    loads = 0
+
+    async def _fake_resolve(
+        names: list[str], *, user_id: str | None = None, connection_provider: Any = None
+    ) -> dict[str, Any]:
+        return {"acme-kb": _USER_CONNECTIONS["acme-kb"]}
+
+    async def _fake_load(connections: dict[str, Any], *, user_id: str | None = None, interceptors: Any = None) -> list:
+        nonlocal loads
+        loads += 1
+        return ["tool"]
+
+    monkeypatch.setattr(loader, "aresolve_mcp_connections", _fake_resolve)
+    monkeypatch.setattr(loader, "load_mcp_tools", _fake_load)
+    monkeypatch.setattr(loader.settings.mcp, "MCP_TOOL_AUTHZ_ENABLED", True)
+
+    built = with_mcp_tools(
+        lambda mcp_tools: mcp_tools, servers=["acme-kb"], user_scoped=True, connection_provider=_provider({})
+    )
+
+    await built({"configurable": {"user_id": "u1"}})
+    await built({"configurable": {"user_id": "u2"}})
+    assert loads == 2
+
+
+async def test_per_run_factory_takes_config_and_caches_deployment_loads(monkeypatch: pytest.MonkeyPatch) -> None:
+    """per_run isolates the graph per run without re-handshaking MCP."""
+    import inspect
+
+    loads = 0
+
+    async def _fake_load(connections: dict[str, Any], *, user_id: str | None = None, interceptors: Any = None) -> list:
+        nonlocal loads
+        loads += 1
+        return ["tool"]
+
+    monkeypatch.setattr(loader, "load_mcp_tools", _fake_load)
+
+    built = with_mcp_tools(lambda mcp_tools: mcp_tools, servers=["acme-kb"], per_run=True)
+    assert list(inspect.signature(built).parameters) == ["config"]
+
+    config = {"configurable": {"user_id": "u1"}}
+    assert await built(config) == ["tool"]
+    assert await built(config) == ["tool"]
+    assert loads == 1
+
+
+async def test_user_scoped_cache_expires(monkeypatch: pytest.MonkeyPatch) -> None:
+    loads = 0
+
+    async def _fake_resolve(
+        names: list[str], *, user_id: str | None = None, connection_provider: Any = None
+    ) -> dict[str, Any]:
+        return {"acme-kb": _USER_CONNECTIONS["acme-kb"]}
+
+    async def _fake_load(connections: dict[str, Any], *, user_id: str | None = None, interceptors: Any = None) -> list:
+        nonlocal loads
+        loads += 1
+        return ["tool"]
+
+    monkeypatch.setattr(loader, "aresolve_mcp_connections", _fake_resolve)
+    monkeypatch.setattr(loader, "load_mcp_tools", _fake_load)
     monkeypatch.setattr(loader.settings.mcp, "MCP_USER_TOOLS_CACHE_TTL_SECS", -1.0)
 
     built = with_mcp_tools(
@@ -154,7 +265,7 @@ async def test_user_scoped_cache_expires(monkeypatch: pytest.MonkeyPatch) -> Non
     config = {"configurable": {"user_id": "u1"}}
     await built(config)
     await built(config)
-    assert calls == 2
+    assert loads == 2
 
 
 # --- circuit breaker + per-server isolation + args fixer ----------------------

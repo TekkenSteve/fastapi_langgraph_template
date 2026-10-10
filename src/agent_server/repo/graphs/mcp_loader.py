@@ -24,6 +24,7 @@ tools — MCP is additive and must never break graph startup.
 """
 
 import asyncio
+import hashlib
 import inspect
 import json
 import os
@@ -366,32 +367,70 @@ async def load_mcp_tools(
     return tools
 
 
-# Per-process TTL cache for user-scoped tool loads. A per-request factory
-# would otherwise pay an MCP handshake per run. TTL bounds staleness after
-# a connection edit — including across instances (no cross-pod invalidation).
-_user_tools_cache: dict[tuple[str, tuple[str, ...]], tuple[float, list[BaseTool]]] = {}
+# Process-local cache for MCP tool loads, keyed by (scope, spec fingerprint).
+#
+# The fingerprint covers every field that decides a live session, so editing a
+# URL/header/command/env takes effect on the next run instead of waiting for the
+# TTL. The TTL still bounds staleness for changes the spec cannot show (a
+# provider row edited underneath an identical spec) and across pods — there is
+# no cross-pod invalidation.
+_FINGERPRINT_KEYS = ("transport", "url", "headers", "command", "args", "env")
+
+_tools_cache: dict[tuple[str, str], tuple[float, list[BaseTool]]] = {}
 
 
-async def _load_user_scoped_tools(
-    user_id: str | None, servers: list[str], connection_provider: ConnectionProvider
-) -> list[BaseTool]:
-    """Resolve + load MCP tools for one run, cached per (user, servers)."""
-    key = (user_id or "", tuple(sorted(servers)))
+def _fingerprint_connections(connections: dict[str, Any]) -> str:
+    """Stable hash of the connection fields that decide a live MCP session."""
+    payload = {
+        name: {key: conn.get(key) for key in _FINGERPRINT_KEYS if key in conn}
+        for name, conn in sorted(connections.items())
+    }
+    encoded = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:32]
+
+
+def _cache_scope(user_id: str | None) -> str:
+    """Cache scope for one load.
+
+    Tools carry user-bound interceptors when per-invocation authorization is on,
+    so in that mode they must not be shared across users.
+    """
+    if settings.mcp.MCP_TOOL_AUTHZ_ENABLED:
+        return f"authz:{user_id or 'system'}"
+    return "shared"
+
+
+async def _cached_load_tools(connections: dict[str, Any], *, user_id: str | None = None) -> list[BaseTool]:
+    """Load tools for *connections*, served from the (scope, fingerprint) cache."""
+    if not connections:
+        return []
+    key = (_cache_scope(user_id), _fingerprint_connections(connections))
     now = time.monotonic()
-    hit = _user_tools_cache.get(key)
+    hit = _tools_cache.get(key)
     if hit and hit[0] > now:
         return hit[1]
-    connections = await aresolve_mcp_connections(
-        list(servers), user_id=user_id, connection_provider=connection_provider
-    )
-    tools = await load_mcp_tools(connections)
-    _user_tools_cache[key] = (now + settings.mcp.MCP_USER_TOOLS_CACHE_TTL_SECS, tools)
+    tools = await load_mcp_tools(connections, user_id=user_id)
+    for expired in [k for k, (expires, _) in _tools_cache.items() if expires <= now]:
+        _tools_cache.pop(expired, None)
+    _tools_cache[key] = (now + settings.mcp.MCP_USER_TOOLS_CACHE_TTL_SECS, tools)
     return tools
 
 
-def clear_user_tools_cache() -> None:
-    """Drop every cached user-scoped tool list (tests; not needed at runtime)."""
-    _user_tools_cache.clear()
+def clear_mcp_tools_cache() -> None:
+    """Drop every cached MCP tool list (tests; not needed at runtime)."""
+    _tools_cache.clear()
+
+
+async def _build_with_tools(build: Callable[..., Any], tools_param: str, tools: list[BaseTool]) -> Any:
+    """Invoke the builder with the resolved tools, awaiting an async builder.
+
+    ``generate_graph`` dispatches the factory's return type only once — an async
+    builder's coroutine must be awaited here to not leak through.
+    """
+    result = build(**{tools_param: tools})
+    if inspect.isawaitable(result):
+        return await result
+    return result
 
 
 def with_mcp_tools(
@@ -399,6 +438,7 @@ def with_mcp_tools(
     servers: list[str],
     *,
     tools_param: str = "mcp_tools",
+    per_run: bool = False,
     user_scoped: bool = False,
     connection_provider: ConnectionProvider | None = None,
 ) -> Callable[..., Awaitable[Any]]:
@@ -408,38 +448,42 @@ def with_mcp_tools(
     factory. The builder receives the tools under ``tools_param`` (empty list
     when nothing resolved).
 
-    With ``user_scoped=True`` the factory takes the run ``config`` — the
-    framework classifies it as a per-request factory, and each run resolves
-    the caller's user-tier connections (from ``configurable.user_id``, via the
-    injected ``connection_provider``) on top of the deployment tiers. Tool
-    loads are TTL-cached per (user, servers); the graph build itself still
-    runs per request, as with any factory graph.
+    ``per_run=True`` makes the factory take the run ``config``, so the framework
+    classifies it as a per-request factory and the graph — including any sandbox
+    its backend owns — is built fresh per run. Deployment-tier tool loads are
+    served from the fingerprint cache, so this does not re-handshake MCP per run.
+
+    ``user_scoped=True`` implies per-run and additionally resolves the caller's
+    user-tier connections (via the injected ``connection_provider``) on top of
+    the deployment tiers. Only names the graph declared are resolved, so a user
+    can never inject a server the graph did not opt into.
     """
-    if not user_scoped:
+    if user_scoped:
+        if connection_provider is None:
+            # Fail at graph-authoring time, not silently per run: opting into the
+            # user tier without a provider would resolve deployment tiers only.
+            raise ValueError("with_mcp_tools(user_scoped=True) requires connection_provider")
+        provider: ConnectionProvider = connection_provider
 
-        async def factory() -> Any:
-            tools = await load_mcp_tools(resolve_mcp_connections(servers))
-            result = build(**{tools_param: tools})
-            # generate_graph dispatches the factory's return type only once — an
-            # async builder's coroutine must be awaited here to not leak through.
-            if inspect.isawaitable(result):
-                return await result
-            return result
+        async def user_factory(config: RunnableConfig) -> Any:
+            user_id = configurable_user_id(config)
+            connections = await aresolve_mcp_connections(list(servers), user_id=user_id, connection_provider=provider)
+            tools = await _cached_load_tools(connections, user_id=user_id)
+            return await _build_with_tools(build, tools_param, tools)
 
-        return factory
+        return user_factory
 
-    if connection_provider is None:
-        # Fail at graph-authoring time, not silently per run: opting into the
-        # user tier without a provider would resolve deployment tiers only.
-        raise ValueError("with_mcp_tools(user_scoped=True) requires connection_provider")
-    provider: ConnectionProvider = connection_provider
+    if per_run:
 
-    async def user_factory(config: RunnableConfig) -> Any:
-        user_id = configurable_user_id(config)
-        tools = await _load_user_scoped_tools(user_id, servers, provider)
-        result = build(**{tools_param: tools})
-        if inspect.isawaitable(result):
-            return await result
-        return result
+        async def per_run_factory(config: RunnableConfig) -> Any:
+            user_id = configurable_user_id(config)
+            tools = await _cached_load_tools(resolve_mcp_connections(servers), user_id=user_id)
+            return await _build_with_tools(build, tools_param, tools)
 
-    return user_factory
+        return per_run_factory
+
+    async def factory() -> Any:
+        tools = await _cached_load_tools(resolve_mcp_connections(servers))
+        return await _build_with_tools(build, tools_param, tools)
+
+    return factory

@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 
 import agent_server.repo.graphs.mcp_loader as loader
-from agent_server.repo.graphs.mcp_loader import load_mcp_tools, resolve_mcp_connections, with_mcp_tools
+from agent_server.repo.graphs.mcp_loader import (
+    clear_mcp_tools_cache,
+    load_mcp_tools,
+    resolve_mcp_connections,
+    with_mcp_tools,
+)
 
 _REGISTRY = {
     "acme-kb": {
@@ -21,6 +26,7 @@ _REGISTRY = {
 @pytest.fixture(autouse=True)
 def _registry(monkeypatch):
     monkeypatch.setattr(loader, "load_mcp_servers_config", lambda: dict(_REGISTRY))
+    clear_mcp_tools_cache()
 
 
 def test_unknown_server_name_skipped_with_warning() -> None:
