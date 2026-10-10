@@ -15,6 +15,9 @@ from hub.services import McpConnectionService
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 SECRET = "s3cret"  # noqa: S105 — fixture; must never leak into views
+# A public IP literal: the URL gate must not need DNS to accept a normal
+# connection, so tests that are not about the gate stay offline.
+PUBLIC_URL = "https://93.184.216.34/kb"
 
 
 def _row(owner: str, name: str, **overrides: Any) -> SimpleNamespace:
@@ -22,7 +25,7 @@ def _row(owner: str, name: str, **overrides: Any) -> SimpleNamespace:
         "user_id": owner,
         "name": name,
         "transport": "streamable_http",
-        "url": "https://mcp.example.com/kb",
+        "url": PUBLIC_URL,
         "auth_type": "none",
         "headers": {},
         "enabled": True,
@@ -82,9 +85,7 @@ def _service(
     return McpConnectionService(repo, policy or LocalPolicyEngine(), user or User(identity="alice"))
 
 
-def _create(
-    name: str = "acme-kb", url: str = "https://mcp.example.com/kb", headers: dict[str, str] | None = None
-) -> McpConnectionCreate:
+def _create(name: str = "acme-kb", url: str = PUBLIC_URL, headers: dict[str, str] | None = None) -> McpConnectionCreate:
     return McpConnectionCreate(name=name, url=url, auth_type="headers" if headers else "none", headers=headers or {})
 
 
@@ -111,7 +112,7 @@ async def test_create_enforces_domain_allowlist(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(svc_module.hub_settings, "MCP_USER_ALLOWED_DOMAINS", "mcp.example.com")
     service = _service(FakeConnectionRepo())
-    await service.create(_create())  # allowed host passes
+    await service.create(_create(url="https://mcp.example.com/kb"))  # allowed host passes
     with pytest.raises(HTTPException) as exc:
         await service.create(_create(name="other", url="https://evil.example.org/mcp"))
     assert exc.value.status_code == 422
@@ -178,3 +179,52 @@ async def test_delete_unknown_is_404() -> None:
     with pytest.raises(HTTPException) as exc:
         await _service(FakeConnectionRepo()).delete("nope")
     assert exc.value.status_code == 404
+
+
+class TestSsrfGate:
+    """A connection URL is fetched server-side, so it gets the same public-address
+    gate as skill import. All cases use IP literals, so no DNS is involved."""
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://127.0.0.1:8080/mcp",
+            "http://169.254.169.254/latest/meta-data",
+            "http://[::1]/mcp",
+            "http://10.0.0.5/mcp",
+            "http://192.168.1.10:9000/mcp",
+            "http://100.64.0.7/mcp",  # CGNAT
+        ],
+    )
+    async def test_private_and_metadata_targets_are_refused(self, url: str) -> None:
+        with pytest.raises(HTTPException) as exc:
+            await _service(FakeConnectionRepo()).create(_create(url=url))
+        assert exc.value.status_code == 422
+
+    async def test_public_target_is_accepted(self) -> None:
+        view = await _service(FakeConnectionRepo()).create(_create(url=PUBLIC_URL))
+        assert view.url == PUBLIC_URL
+
+    async def test_update_revalidates_the_new_url_through_the_gate(self) -> None:
+        repo = FakeConnectionRepo()
+        service = _service(repo)
+        await service.create(_create())
+        with pytest.raises(HTTPException) as exc:
+            await service.update("acme-kb", McpConnectionUpdate(url="http://169.254.169.254/mcp"))
+        assert exc.value.status_code == 422
+
+    async def test_the_allowlist_is_the_explicit_private_host_escape(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A self-hoster can vouch for one LAN host without opening everything."""
+        from hub import services as svc_module
+
+        monkeypatch.setattr(svc_module.hub_settings, "MCP_USER_ALLOWED_DOMAINS", "192.168.1.10")
+        view = await _service(FakeConnectionRepo()).create(_create(url="http://192.168.1.10:9000/mcp"))
+        assert view.url == "http://192.168.1.10:9000/mcp"
+
+    async def test_an_empty_allowlist_does_not_excuse_a_private_host(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from hub import services as svc_module
+
+        monkeypatch.setattr(svc_module.hub_settings, "MCP_USER_ALLOWED_DOMAINS", "")
+        with pytest.raises(HTTPException) as exc:
+            await _service(FakeConnectionRepo()).create(_create(url="http://10.1.2.3/mcp"))
+        assert exc.value.status_code == 422

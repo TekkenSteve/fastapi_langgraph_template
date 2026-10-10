@@ -17,6 +17,7 @@ from agent_server.auth.policy import PolicyEngine
 from agent_server.domain.policy import CREATE, DELETE, READ, SEARCH, UPDATE, ResourceRef
 from agent_server.domain.user import User
 from agent_server.infra.skill_fetcher import SkillFetchError, fetch_bytes
+from agent_server.infra.url_guard import UrlGuardError, validate_public_http_url
 from hub.config import hub_settings
 from hub.db import McpConnection as McpConnectionORM
 from hub.db import Skill as SkillORM
@@ -176,16 +177,31 @@ class McpConnectionService:
         self._policy = policy
         self._user = user
 
-    def _validate(self, name: str, url: str) -> None:
-        """Domain rules plus the ops domain allowlist, mapped to 422."""
+    async def _validate(self, name: str, url: str) -> None:
+        """Domain rules, the ops allowlist, and the SSRF gate, mapped to 422.
+
+        A connection URL is handed to a server-side fetch, so it gets the same
+        public-address gate as skill import: loopback, private, link-local
+        (cloud metadata) and reserved targets are refused. ``MCP_USER_ALLOWED_DOMAINS``
+        is the explicit trust list — a host listed there is taken as
+        operator-vetted and skips the public-address check (the escape hatch for
+        a LAN server); an empty list does not.
+        """
         try:
             validate_connection_name(name)
             validate_connection_url(url)
         except McpConnectionValidationError as e:
             raise HTTPException(status_code=422, detail=str(e)) from e
+        hostname = (urlparse(url).hostname or "").lower()
         allowed = hub_settings.allowed_mcp_domains()
-        if allowed and urlparse(url).hostname not in allowed:
+        explicitly_allowed = bool(hostname) and hostname in allowed
+        if allowed and not explicitly_allowed:
             raise HTTPException(status_code=422, detail=f"url host is not in MCP_USER_ALLOWED_DOMAINS: {allowed}")
+        if not explicitly_allowed:
+            try:
+                await validate_public_http_url(url)
+            except UrlGuardError as e:
+                raise HTTPException(status_code=422, detail=str(e)) from e
 
     async def _get_owned(self, name: str) -> McpConnectionORM:
         row = await self._connections.get_for_owner(self._user.identity, name)
@@ -215,7 +231,7 @@ class McpConnectionService:
         """Register a new connection. Name collisions with the deployment
         registry are allowed on purpose — the user connection wins at resolve
         time (user > registry precedence, docs/design/hub.md)."""
-        self._validate(payload.name, payload.url)
+        await self._validate(payload.name, payload.url)
         await self._policy.require(
             self._user,
             CREATE,
@@ -240,7 +256,7 @@ class McpConnectionService:
         row = await self._get_owned(name)
         await self._policy.require(self._user, UPDATE, self._ref(row))
         if payload.url is not None:
-            self._validate(row.name, payload.url)
+            await self._validate(row.name, payload.url)
             row.url = payload.url
         if payload.headers is not None:
             row.headers = payload.headers

@@ -196,3 +196,39 @@ def test_oauth_callback_rejects_unknown_state(callback_client: TestClient, monke
     monkeypatch.setattr("hub.api.complete_from_browser", AsyncMock(return_value=False))
     response = callback_client.get("/hub/oauth/callback", params={"code": "abc", "state": "stale"})
     assert response.status_code == 400
+
+
+# --- rate limiting ------------------------------------------------------------
+
+
+class TestRateLimit:
+    """Hub routes do outbound work (import fetch, MCP proxy), so they carry the
+    same default tier as the protocol routers."""
+
+    def test_authenticated_routes_carry_the_default_limiter(self) -> None:
+        from agent_server.auth.rate_limit import rate_limit_default
+        from hub import api as hub_api
+
+        dependencies = [d.dependency for d in hub_api.router.dependencies]
+
+        assert rate_limit_default in dependencies
+
+    def test_public_oauth_callback_carries_no_limiter(self) -> None:
+        """It is a credentials-free browser redirect: a user-keyed limiter would
+        reject it outright (no user to key on)."""
+        from hub import api as hub_api
+
+        assert hub_api.public_router.dependencies == []
+
+    def test_exceeding_the_limit_is_429(
+        self, client: TestClient, service: AsyncMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import agent_server.auth.rate_limit as rl
+
+        monkeypatch.setattr(rl, "_limiter", None)
+        monkeypatch.setattr(rl.settings.app, "RATE_LIMIT_ENABLED", True)
+        monkeypatch.setattr(rl.settings.app, "RATE_LIMIT_DEFAULT", "1/minute")
+        service.list_mine.return_value = [_summary()]
+
+        assert client.get("/skills").status_code == 200
+        assert client.get("/skills").status_code == 429

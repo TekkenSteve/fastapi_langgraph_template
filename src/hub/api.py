@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_server.auth.deps import auth_dependency, get_current_user
 from agent_server.auth.policy import PolicyEngine, get_policy_engine
+from agent_server.auth.rate_limit import rate_limit_default
 from agent_server.domain.user import User
 from agent_server.repo.orm import get_session
 from hub import apps_host
@@ -33,7 +34,11 @@ from hub.services import McpConnectionService, SkillService
 
 logger = structlog.getLogger(__name__)
 
-router = APIRouter(tags=["hub"], dependencies=auth_dependency)
+# The default tier covers every hub route: skill import and the MCP Apps host
+# proxy both do outbound network work, so they need the same abuse ceiling as
+# the protocol routers (settings.app.RATE_LIMIT_DEFAULT). The public OAuth
+# callback stays unauthenticated and un-limited by design.
+router = APIRouter(tags=["hub"], dependencies=[*auth_dependency, Depends(rate_limit_default)])
 
 # The OAuth callback is a browser redirect from the external auth server — it
 # carries no user credentials, only the flow's state/code. It stays public and
