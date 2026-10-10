@@ -329,14 +329,52 @@ class _JsonArgsFixedTool(BaseTool):
         return await self.inner.ainvoke(fixed)
 
 
-def _wrap_with_args_fixer(tool: BaseTool) -> BaseTool:
-    """Wrap one tool with the stringified-JSON args repair."""
+# --- LLM-safe tool names -------------------------------------------------------
+# MCP servers name their tools freely, but strict function-calling APIs accept
+# only ``^[a-zA-Z0-9_-]{1,64}$`` — and an illegal name fails the whole request,
+# not just that tool. Names are normalized at the model-facing boundary; the
+# wrapper still routes to the original tool, and the original name is kept in
+# metadata for logs/UI.
+_LLM_SAFE_TOOL_NAME = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+_ILLEGAL_TOOL_NAME_CHARS = re.compile(r"[^a-zA-Z0-9_-]+")
+_MAX_TOOL_NAME_LEN = 64
+
+
+def sanitize_tool_name(name: str, *, used: set[str] | None = None) -> str:
+    """Return a function-calling-safe tool name, unique within *used*.
+
+    Illegal runs collapse to ``_``, over-long names are truncated (leaving room
+    for a collision suffix), and collisions get ``_2``/``_3``. Passing the same
+    *used* set across one catalog is what makes the result stable and unique;
+    callers that need to map a name back must replay it in the same order.
+    """
+    base = name if _LLM_SAFE_TOOL_NAME.match(name) else _ILLEGAL_TOOL_NAME_CHARS.sub("_", name).strip("_")
+    base = base or "tool"
+    if len(base) > _MAX_TOOL_NAME_LEN:
+        base = base[: _MAX_TOOL_NAME_LEN - 4].rstrip("_") or "tool"
+    candidate = base
+    suffix = 2
+    while used is not None and candidate in used:
+        extra = f"_{suffix}"
+        stem = base[: _MAX_TOOL_NAME_LEN - len(extra)].rstrip("_") or "tool"
+        candidate = f"{stem}{extra}"
+        suffix += 1
+    if used is not None:
+        used.add(candidate)
+    return candidate
+
+
+def _wrap_with_args_fixer(tool: BaseTool, *, exposed_name: str) -> BaseTool:
+    """Wrap one tool: stringified-JSON args repair plus its exposed name."""
+    metadata = dict(getattr(tool, "metadata", None) or {})
+    if exposed_name != tool.name:
+        metadata["original_tool_name"] = tool.name
     return _JsonArgsFixedTool(
         inner=tool,
-        name=tool.name,
+        name=exposed_name,
         description=tool.description,
         args_schema=getattr(tool, "args_schema", None),
-        metadata=getattr(tool, "metadata", None),
+        metadata=metadata or None,
     )
 
 
@@ -398,11 +436,17 @@ async def load_mcp_tools(
         if isinstance(result, BaseException):
             logger.warning("mcp_tools_load_failed", server=name, error=str(result))
             continue
-        tools.extend(_wrap_with_args_fixer(t) for t in result)
+        tools.extend(result)
     if settings.mcp.MCP_APPS_ENABLED:
         tools = filter_model_facing_tools(tools)
-    logger.info("mcp_tools_loaded", servers=list(pending), tools=[t.name for t in tools])
-    return tools
+    # One `used` set across the whole catalog: the model sees a flat list, so
+    # uniqueness has to hold there, not per server.
+    used_names: set[str] = set()
+    exposed = [
+        _wrap_with_args_fixer(tool, exposed_name=sanitize_tool_name(tool.name, used=used_names)) for tool in tools
+    ]
+    logger.info("mcp_tools_loaded", servers=list(pending), tools=[t.name for t in exposed])
+    return exposed
 
 
 # Process-local cache for MCP tool loads, keyed by (scope, spec fingerprint).

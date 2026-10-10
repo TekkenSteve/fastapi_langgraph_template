@@ -551,3 +551,46 @@ async def test_breakers_are_scoped_per_endpoint_not_per_name(monkeypatch: pytest
 
     assert calls == ["https://bob.example.com/mcp"]
     assert [t.name for t in tools] == ["acme-kb"]
+
+
+# --- LLM-safe tool names -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("kb_search", "kb_search"),
+        ("search.kb", "search_kb"),
+        ("search kb", "search_kb"),
+        ("--edge--", "--edge--"),  # hyphens are legal in function names
+        (" edge ", "edge"),
+        ("天气查询", "tool"),
+        ("a" * 80, "a" * 60),
+    ],
+)
+def test_sanitize_tool_name(raw: str, expected: str) -> None:
+    assert loader.sanitize_tool_name(raw) == expected
+
+
+def test_sanitize_tool_name_dedupes_within_one_catalog() -> None:
+    used: set[str] = set()
+
+    names = [loader.sanitize_tool_name(raw, used=used) for raw in ("search.kb", "search kb", "search.kb")]
+
+    assert names == ["search_kb", "search_kb_2", "search_kb_3"]
+    assert len(set(names)) == 3
+
+
+async def test_load_exposes_llm_safe_names_and_keeps_the_originals(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A strict provider rejects the whole request over one illegal tool name."""
+
+    async def fake_load(name: str, conn: dict, timeout: float, interceptors: Any) -> list:
+        return [*_fake_tools("search.kb"), *_fake_tools("plain")]
+
+    monkeypatch.setattr(loader, "_load_server_tools", fake_load)
+
+    tools = await loader.load_mcp_tools({"srv": {}})
+
+    assert [t.name for t in tools] == ["search_kb", "plain"]
+    assert tools[0].metadata == {"original_tool_name": "search.kb"}
+    assert tools[1].metadata is None

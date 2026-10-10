@@ -29,7 +29,7 @@ from fastapi import HTTPException
 
 from agent_server.config.settings import settings
 from agent_server.repo.graphs.mcp_apps import ensure_mcp_apps_capability_advertised
-from agent_server.repo.graphs.mcp_loader import mcp_breaker
+from agent_server.repo.graphs.mcp_loader import mcp_breaker, sanitize_tool_name
 from hub.db import McpConnection as McpConnectionORM
 from hub.oauth.flow import build_oauth_auth
 
@@ -85,21 +85,54 @@ def _timeout() -> float:
 
 
 async def list_tools(connection: McpConnectionORM) -> list[dict[str, Any]]:
-    """The connection's tools with their metadata (incl. _meta.ui)."""
+    """The connection's tools with their metadata (incl. _meta.ui), unfiltered.
+
+    ``llm_name`` is included when it differs from the server's own name: the UI
+    can then render the same identifier the model calls, and ``call_tool``
+    accepts either.
+    """
 
     async def _list() -> list[dict[str, Any]]:
         tools = await _client_for(connection).get_tools()
-        return [{"name": t.name, "description": t.description, "metadata": t.metadata or {}} for t in tools]
+        used: set[str] = set()
+        payload: list[dict[str, Any]] = []
+        for tool in tools:
+            entry: dict[str, Any] = {
+                "name": tool.name,
+                "description": tool.description,
+                "metadata": tool.metadata or {},
+            }
+            llm_name = sanitize_tool_name(tool.name, used=used)
+            if llm_name != tool.name:
+                entry["llm_name"] = llm_name
+            payload.append(entry)
+        return payload
 
     return await _run_guarded(connection, _list)
 
 
+def _find_tool(tools: list[Any], tool_name: str) -> Any | None:
+    """Resolve a requested name against the server's names and their LLM-safe forms.
+
+    Replays the same sequential normalization ``list_tools`` used, so a UI that
+    asks for the ``llm_name`` it was handed gets exactly that tool. The suffix
+    form stays accepted because ``tool_name_prefix`` upstreams expose
+    ``server_tool`` while callers often ask for ``tool``.
+    """
+    used: set[str] = set()
+    for tool in tools:
+        llm_name = sanitize_tool_name(tool.name, used=used)
+        if tool_name in (tool.name, llm_name) or tool.name.endswith(f"_{tool_name}"):
+            return tool
+    return None
+
+
 async def call_tool(connection: McpConnectionORM, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
-    """Invoke one tool by name; content and artifact pass through."""
+    """Invoke one tool by name (server name or LLM-safe name); content and artifact pass through."""
 
     async def _call() -> dict[str, Any] | None:
         tools = await _client_for(connection).get_tools()
-        tool = next((t for t in tools if t.name == tool_name or t.name.endswith(f"_{tool_name}")), None)
+        tool = _find_tool(tools, tool_name)
         if tool is None:
             return None  # returned, not raised: a bad name must not trip the breaker
         result = await tool.ainvoke(args)

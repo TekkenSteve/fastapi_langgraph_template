@@ -122,3 +122,30 @@ def test_client_creation_skips_the_patch_when_apps_is_off(monkeypatch: pytest.Mo
     apps_host._client_for(_row())
 
     assert installed == []
+
+
+async def test_list_tools_exposes_the_llm_safe_name_when_it_differs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The UI can render the identifier the model would call."""
+    monkeypatch.setattr(apps_host, "_client_for", lambda _row: _Client([_Tool("search.kb"), _Tool("plain")]))
+
+    tools = await apps_host.list_tools(_row())
+
+    assert tools[0]["name"] == "search.kb"
+    assert tools[0]["llm_name"] == "search_kb"
+    assert "llm_name" not in tools[1]
+
+
+async def test_call_tool_accepts_the_llm_safe_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    invoked: list[dict[str, Any]] = []
+
+    class _Recording(_Tool):
+        async def ainvoke(self, args: dict[str, Any]) -> dict[str, Any]:
+            invoked.append(args)
+            return {"ok": args}
+
+    monkeypatch.setattr(apps_host, "_client_for", lambda _row: _Client([_Recording("search.kb")]))
+
+    result = await apps_host.call_tool(_row(), "search_kb", {"q": 1})
+
+    assert result["content"] == {"ok": {"q": 1}}
+    assert invoked == [{"q": 1}]
