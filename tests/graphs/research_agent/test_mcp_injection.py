@@ -42,3 +42,95 @@ def test_each_build_gets_a_fresh_sandbox(monkeypatch: pytest.MonkeyPatch) -> Non
     second = build_backend()
 
     assert first.default is not second.default
+
+
+def _user_connections(monkeypatch: pytest.MonkeyPatch, rows: list[Any]) -> list[dict[str, Any]]:
+    """Point the hub's graph-side loader at *rows* and capture what the loader is asked to load."""
+    import agent_server.repo.graphs.mcp_loader as loader
+    from hub import queries
+
+    class _Result:
+        def scalars(self) -> "_Result":
+            return self
+
+        def all(self) -> list[Any]:
+            return rows
+
+    class _Session:
+        async def execute(self, _stmt: Any) -> _Result:
+            return _Result()
+
+    class _SessionMaker:
+        async def __aenter__(self) -> _Session:
+            return _Session()
+
+        async def __aexit__(self, *exc: Any) -> bool:
+            return False
+
+    def _maker() -> _SessionMaker:
+        return _SessionMaker()
+
+    monkeypatch.setattr(queries, "get_session_maker", lambda: _maker)
+    loader.clear_mcp_tools_cache()
+    captured: list[dict[str, Any]] = []
+
+    async def _capture(connections: dict[str, Any], *, user_id: str | None = None, interceptors: Any = None) -> list:
+        captured.append(connections)
+        return []
+
+    monkeypatch.setattr(loader, "load_mcp_tools", _capture)
+    return captured
+
+
+def test_a_users_own_connection_wins_over_the_deployment_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The entry is wired to the hub user tier — a name the user connected
+    resolves to their endpoint, not the shared registry one."""
+    import asyncio
+    from types import SimpleNamespace
+
+    row = SimpleNamespace(
+        user_id="u1",
+        name="acme-kb",
+        transport="streamable_http",
+        url="https://user.example.com/kb",
+        auth_type="none",
+        headers={},
+        enabled=True,
+    )
+    captured = _user_connections(monkeypatch, [row])
+
+    built = asyncio.run(graph({"configurable": {"user_id": "u1"}}))
+
+    assert built is not None
+    assert captured == [{"acme-kb": {"transport": "streamable_http", "url": "https://user.example.com/kb"}}]
+
+
+def test_a_user_without_connections_falls_back_to_the_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    captured = _user_connections(monkeypatch, [])
+
+    asyncio.run(graph({"configurable": {"user_id": "u1"}}))
+
+    assert captured[0]["acme-kb"]["transport"] == "stdio"
+
+
+def test_a_disabled_user_connection_blocks_the_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Turning a connection off must not silently mean "use the shared one"."""
+    import asyncio
+    from types import SimpleNamespace
+
+    row = SimpleNamespace(
+        user_id="u1",
+        name="acme-kb",
+        transport="streamable_http",
+        url="https://user.example.com/kb",
+        auth_type="none",
+        headers={},
+        enabled=False,
+    )
+    captured = _user_connections(monkeypatch, [row])
+
+    asyncio.run(graph({"configurable": {"user_id": "u1"}}))
+
+    assert captured == []
