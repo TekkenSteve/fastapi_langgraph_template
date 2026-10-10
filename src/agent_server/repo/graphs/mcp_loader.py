@@ -44,11 +44,11 @@ from agent_server.config.settings import settings
 from agent_server.domain.run_config import configurable_user_id
 from agent_server.infra.circuit_breaker import (
     CircuitBreaker,
-    CircuitOpenError,
     get_breaker_storage,
     reset_breaker_state,
 )
 from agent_server.repo.graphs.mcp_apps import ensure_mcp_apps_capability_advertised, filter_model_facing_tools
+from agent_server.repo.graphs.mcp_errors import classify_mcp_error
 
 logger = structlog.getLogger(__name__)
 
@@ -427,14 +427,11 @@ async def load_mcp_tools(
     results = await asyncio.gather(*pending.values(), return_exceptions=True)
     tools: list[BaseTool] = []
     for name, result in zip(pending, results, strict=True):
-        if isinstance(result, CircuitOpenError):
-            logger.info("mcp_breaker_open_skipped", server=name)
-            continue
-        if isinstance(result, TimeoutError):
-            logger.warning("mcp_tools_load_timeout", server=name)
-            continue
         if isinstance(result, BaseException):
-            logger.warning("mcp_tools_load_failed", server=name, error=str(result))
+            # Same classification the API surfaces use, so "auth" and "down"
+            # are distinguishable in logs too.
+            failure = classify_mcp_error(result, server=name)
+            logger.warning("mcp_tools_load_failed", server=name, reason=failure.reason.value, error=failure.message)
             continue
         tools.extend(result)
     if settings.mcp.MCP_APPS_ENABLED:

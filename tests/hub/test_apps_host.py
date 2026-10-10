@@ -86,8 +86,40 @@ async def test_transport_failure_is_502_and_counts_against_the_breaker(monkeypat
         await apps_host.list_tools(_row())
 
     assert exc.value.status_code == 502
+    assert exc.value.detail["reason"] == "unreachable"
     state = (await loader.get_mcp_breaker_states())["acme-kb"]
     assert state["open"] is True
+
+
+async def test_a_rejected_credential_asks_the_caller_to_reauthorize(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The point of classifying: a 401 must not look like a dead server."""
+    metadata = "https://auth.example.com/.well-known/oauth-protected-resource"
+
+    class _Unauthorized(Exception):
+        def __init__(self) -> None:
+            super().__init__("unauthorized")
+            self.response = SimpleNamespace(
+                status_code=401, headers={"WWW-Authenticate": f'Bearer resource_metadata="{metadata}"'}
+            )
+
+    monkeypatch.setattr(apps_host, "_client_for", lambda _row: _Client(_Unauthorized()))
+
+    with pytest.raises(HTTPException) as exc:
+        await apps_host.list_tools(_row())
+
+    assert exc.value.status_code == 401
+    assert exc.value.detail["reason"] == "auth_required"
+    assert exc.value.detail["resource_metadata"] == metadata
+
+
+async def test_a_deadline_is_504_not_a_generic_502(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(apps_host, "_client_for", lambda _row: _Client(TimeoutError("deadline")))
+
+    with pytest.raises(HTTPException) as exc:
+        await apps_host.list_tools(_row())
+
+    assert exc.value.status_code == 504
+    assert exc.value.detail["reason"] == "timeout"
 
 
 async def test_tool_content_and_artifact_pass_through(monkeypatch: pytest.MonkeyPatch) -> None:

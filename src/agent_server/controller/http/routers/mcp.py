@@ -22,6 +22,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from agent_server.config.graph_config import load_mcp_servers_config
+from agent_server.repo.graphs.mcp_errors import McpFailureReason, classify_mcp_error
 from agent_server.repo.graphs.mcp_loader import (
     _load_server_tools,
     env_override_names,
@@ -42,6 +43,8 @@ class McpServerStatus(BaseModel):
     status: str  # "ok" | "error"
     tools: list[str] = []
     error: str | None = None
+    reason: str | None = None  # classified failure (mcp_errors.McpFailureReason)
+    resource_metadata: str | None = None  # OAuth protected-resource metadata URL, when advertised
     source: str = "registry"  # "registry" | "env" (supplied by MCP_SERVER__* only)
     breaker: str | None = None  # None = never loaded | "closed" | "open (Ns remaining)"
 
@@ -72,18 +75,30 @@ async def list_mcp_servers() -> list[McpServerStatus]:
                 problems = validate_connection_dict(name, raw)
                 if problems:
                     detail = "; ".join(problems)
-            return McpServerStatus(name=name, status="error", error=detail, source=source, breaker=breaker_label)
+            return McpServerStatus(
+                name=name,
+                status="error",
+                error=detail,
+                reason=McpFailureReason.INVALID_CONFIG.value,
+                source=source,
+                breaker=breaker_label,
+            )
         try:
             async with asyncio.timeout(_PROBE_TIMEOUT_SECS):
                 tools = await _load_server_tools(name, conn, _PROBE_TIMEOUT_SECS, None)
             return McpServerStatus(
                 name=name, status="ok", tools=[t.name for t in tools], source=source, breaker=breaker_label
             )
-        except TimeoutError:
-            return McpServerStatus(
-                name=name, status="error", error="probe timed out", source=source, breaker=breaker_label
-            )
         except Exception as e:
-            return McpServerStatus(name=name, status="error", error=str(e)[:300], source=source, breaker=breaker_label)
+            failure = classify_mcp_error(e, server=name)
+            return McpServerStatus(
+                name=name,
+                status="error",
+                error=failure.message,
+                reason=failure.reason.value,
+                resource_metadata=failure.resource_metadata,
+                source=source,
+                breaker=breaker_label,
+            )
 
     return list(await asyncio.gather(*(_probe(n) for n in names)))

@@ -28,6 +28,7 @@ from fastapi import HTTPException
 
 from agent_server.config.settings import settings
 from agent_server.repo.graphs.mcp_apps import ensure_mcp_apps_capability_advertised
+from agent_server.repo.graphs.mcp_errors import classify_mcp_error
 from agent_server.repo.graphs.mcp_loader import mcp_breaker, sanitize_tool_name
 from hub.db import McpConnection as McpConnectionORM
 from hub.oauth.flow import build_oauth_auth
@@ -64,18 +65,21 @@ async def _run_guarded(connection: McpConnectionORM, operation: Any) -> Any:
     once against the breaker (same as a graph-side load). Client errors (an
     unknown tool, say) must therefore be *returned* by the operation, not
     raised — a bad tool name is not the server flapping.
+
+    Transport failures come back classified (``mcp_errors``): the caller gets a
+    status and a reason it can act on — 401 ``auth_required`` with the server's
+    OAuth metadata URL, 504 ``timeout``, 503 ``circuit_open`` — instead of one
+    undifferentiated 502.
     """
     try:
         async with asyncio.timeout(_timeout()):
             return await mcp_breaker(connection.name, _connection_map(connection)).call(operation)
-    except TimeoutError as e:
-        raise HTTPException(status_code=502, detail=f"MCP server {connection.name!r} timed out") from e
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(
-            status_code=502, detail=f"MCP server {connection.name!r} unreachable: {str(e)[:300]}"
-        ) from e
+        failure = classify_mcp_error(e, server=connection.name)
+        logger.warning("mcp_proxy_failed", server=connection.name, reason=failure.reason.value)
+        raise HTTPException(status_code=failure.status_code, detail=failure.as_detail()) from e
 
 
 def _timeout() -> float:

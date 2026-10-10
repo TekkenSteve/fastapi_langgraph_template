@@ -1,5 +1,6 @@
 """MCP loader hub tests: user-tier resolution via injected providers."""
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -504,7 +505,36 @@ async def test_probe_surfaces_config_problems(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(mcp_router_mod, "env_override_names", lambda: [])
     results = await mcp_router_mod.list_mcp_servers()
     assert results[0].status == "error"
+    assert results[0].reason == "invalid_config"
     assert "unknown transport" in results[0].error
+
+
+async def test_probe_reports_a_classified_failure_with_the_oauth_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 401 in the probe is actionable, not just a string."""
+    from agent_server.controller.http.routers import mcp as mcp_router_mod
+
+    metadata = "https://auth.example.com/.well-known/oauth-protected-resource"
+
+    class _Unauthorized(Exception):
+        def __init__(self) -> None:
+            super().__init__("unauthorized")
+            self.response = SimpleNamespace(
+                status_code=401, headers={"WWW-Authenticate": f'Bearer resource_metadata="{metadata}"'}
+            )
+
+    async def _reject(name: str, conn: dict, timeout: float, interceptors: Any) -> list:
+        raise _Unauthorized()
+
+    monkeypatch.setattr(mcp_router_mod, "_load_server_tools", _reject)
+    monkeypatch.setattr(mcp_router_mod, "env_override_names", lambda: [])
+
+    results = await mcp_router_mod.list_mcp_servers()
+
+    assert results[0].status == "error"
+    assert results[0].reason == "auth_required"
+    assert results[0].resource_metadata == metadata
 
 
 # --- explicit disable + endpoint-scoped breakers ------------------------------
