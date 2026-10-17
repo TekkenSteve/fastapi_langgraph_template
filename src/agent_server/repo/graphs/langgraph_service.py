@@ -19,11 +19,14 @@ from typing import Any, TypeVar
 from uuid import uuid5
 
 import structlog
+from langchain_core.callbacks import BaseCallbackManager
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph
 from langgraph.pregel import Pregel
 from langgraph_sdk.auth.types import BaseUser
 
 from agent_server.config.constants import ASSISTANT_NAMESPACE_UUID
+from agent_server.config.graph_config import GraphRegistryEntry, parse_graph_entry
 from agent_server.domain.run_config import strip_pinned_config_keys
 from agent_server.domain.user import User
 from agent_server.infra.observability.base import (
@@ -43,6 +46,29 @@ from agent_server.repo.graphs.graph_factory import (
 
 State = TypeVar("State")
 logger = structlog.get_logger(__name__)
+
+
+def _copy_graph_config(config: RunnableConfig | None) -> RunnableConfig | None:
+    """Deep-copy a graph's config but share its callback handlers.
+
+    A handler object (Langfuse's CallbackHandler, say) holds a client that
+    deepcopy cannot rebuild, so a naive ``copy.deepcopy(base_graph.config)``
+    fails and the caller's fallback runs the graph without checkpointer or
+    store — persistence silently gone. Pre-seeding the memo map makes the copy
+    reuse the handler objects as-is while everything else is still deep-copied.
+    """
+    if not config:
+        return config
+    callbacks = config.get("callbacks")
+    if isinstance(callbacks, BaseCallbackManager):
+        handlers = [*callbacks.handlers, *callbacks.inheritable_handlers]
+    elif callbacks is None:
+        handlers = []
+    elif isinstance(callbacks, list):
+        handlers = callbacks
+    else:
+        handlers = [callbacks]
+    return copy.deepcopy(config, memo={id(handler): handler for handler in handlers})
 
 
 def _module_name_for(graph_id: str) -> str:
@@ -69,7 +95,7 @@ class LangGraphService:
         self.config_path = Path(config_path) if config_path else Path("langgraph.json")
         self._explicit_config = config_path is not None
         self.config: dict[str, Any] | None = None
-        self._graph_registry: dict[str, Any] = {}
+        self._graph_registry: dict[str, GraphRegistryEntry] = {}
         # Cache for base graph definitions (without checkpointer/store).
         # For factory graphs, this holds the default-compiled graph (for schema extraction).
         self._base_graph_cache: dict[str, Pregel] = {}
@@ -122,15 +148,17 @@ class LangGraphService:
         await self._ensure_default_assistants()
 
     def _load_graph_registry(self) -> None:
-        """Load graph definitions from langgraph.json"""
+        """Load graph definitions from langgraph.json (string or object form)."""
         if self.config is None:
             raise ValueError("Configuration not loaded")
-        graphs_config = self.config.get("graphs", {})
+        raw_graphs_config = self.config.get("graphs", {})
+        if not isinstance(raw_graphs_config, dict):
+            raise ValueError("Configuration field 'graphs' must be an object")
 
         # Detect graph_ids that collide after sanitisation (e.g. "a.b" and
         # "a_b" both map to user_graphs.a_b in sys.modules).
         seen_modules: dict[str, str] = {}
-        for graph_id in graphs_config:
+        for graph_id in raw_graphs_config:
             mod_name = _module_name_for(graph_id)
             if mod_name in seen_modules:
                 raise ValueError(
@@ -139,16 +167,8 @@ class LangGraphService:
                 )
             seen_modules[mod_name] = graph_id
 
-        for graph_id, graph_path in graphs_config.items():
-            # Parse path format: "./graphs/weather_agent.py:graph"
-            if ":" not in graph_path:
-                raise ValueError(f"Invalid graph path format: {graph_path}")
-
-            file_path, export_name = graph_path.split(":", 1)
-            self._graph_registry[graph_id] = {
-                "file_path": file_path,
-                "export_name": export_name,
-            }
+        for graph_id, graph_config in raw_graphs_config.items():
+            self._graph_registry[graph_id] = parse_graph_entry(graph_id, graph_config)
 
     async def _load_all_graph_modules(self) -> None:
         """Eagerly load all graph modules, classifying factories without calling them.
@@ -394,7 +414,7 @@ class LangGraphService:
                     update={
                         "checkpointer": checkpointer,
                         "store": store,
-                        "config": copy.deepcopy(base_graph.config),
+                        "config": _copy_graph_config(base_graph.config),
                     }
                 )
             except Exception as exc:
@@ -458,7 +478,7 @@ class LangGraphService:
 
         return await self._get_base_graph(graph_id)
 
-    async def _load_graph_from_file(self, graph_id: str, graph_info: dict[str, str]) -> Pregel | StateGraph | None:
+    async def _load_graph_from_file(self, graph_id: str, graph_info: GraphRegistryEntry) -> Pregel | StateGraph | None:
         """Load graph from filesystem.
 
         Paths are resolved relative to the config file's directory.

@@ -6,12 +6,16 @@ from pathlib import Path
 from unittest.mock import Mock, mock_open, patch
 
 import pytest
+from langchain_core.callbacks import BaseCallbackHandler, CallbackManager
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph import START, MessagesState, StateGraph
 
 # Import the settings singleton directly to patch it
 from agent_server.config import graph_config as config_module
 from agent_server.config.settings import settings
 from agent_server.repo.graphs.langgraph_service import (
     LangGraphService,
+    _copy_graph_config,
     create_run_config,
     create_thread_config,
     inject_user_context,
@@ -1019,3 +1023,68 @@ class TestSetupDependencies:
             assert idx1 < idx2  # dep1 has higher priority (lower index)
         finally:
             sys.path = original_path
+
+
+class _NoDeepcopyHandler(BaseCallbackHandler):
+    """Stands in for handlers like Langfuse's, whose clients deepcopy cannot rebuild."""
+
+    def __deepcopy__(self, memo: dict) -> "_NoDeepcopyHandler":
+        raise TypeError("handler cannot be deep-copied")
+
+
+class TestCopyGraphConfig:
+    """A graph whose config carries non-deepcopyable callbacks must not lose persistence."""
+
+    def test_copies_the_manager_but_shares_its_handlers(self):
+        handler = _NoDeepcopyHandler()
+        inheritable = _NoDeepcopyHandler()
+        manager = CallbackManager(handlers=[handler], inheritable_handlers=[inheritable], tags=["a"])
+
+        copied = _copy_graph_config({"callbacks": manager, "metadata": {"team": "a"}})
+
+        copied_manager = copied["callbacks"]
+        assert isinstance(copied_manager, CallbackManager)
+        assert copied_manager is not manager
+        assert copied_manager.handlers[0] is handler
+        assert copied_manager.inheritable_handlers[0] is inheritable
+        # the manager is a copy (its own tags list); the handlers are shared
+        copied_manager.add_tags(["b"])
+        assert manager.tags == ["a"]
+        assert copied["metadata"] == {"team": "a"}
+        assert copied["metadata"] is not None
+
+    def test_handles_none_empty_and_plain_handler_lists(self):
+        assert _copy_graph_config(None) is None
+        assert _copy_graph_config({"callbacks": None}) == {"callbacks": None}
+        handler = _NoDeepcopyHandler()
+        copied = _copy_graph_config({"callbacks": [handler]})
+        assert copied["callbacks"][0] is handler
+
+    async def test_get_graph_keeps_persistence_when_config_has_non_copyable_callbacks(self, monkeypatch):
+        """Regression: deepcopying the base config used to fail, and the
+        fallback ran the graph with no checkpointer or store."""
+        handler = _NoDeepcopyHandler()
+        builder = StateGraph(MessagesState)
+        builder.add_node("noop", lambda state: {})
+        builder.add_edge(START, "noop")
+        base = builder.compile().with_config(callbacks=[handler], metadata={"team": "a"})
+
+        service = LangGraphService()
+        service._graph_registry["cb"] = {"file_path": "f", "export_name": "g"}
+        service._base_graph_cache["cb"] = base
+        checkpointer = InMemorySaver()
+
+        class FakeDBManager:
+            def get_checkpointer(self):
+                return checkpointer
+
+            def get_store(self):
+                return None
+
+        monkeypatch.setattr("agent_server.repo.database.db_manager", FakeDBManager())
+
+        async with service.get_graph("cb") as graph:
+            assert graph.checkpointer is checkpointer
+            assert graph.config["callbacks"][0] is handler
+            assert graph.config["metadata"] == {"team": "a"}
+            assert graph.config["metadata"] is not base.config["metadata"]
