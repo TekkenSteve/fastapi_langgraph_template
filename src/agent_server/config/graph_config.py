@@ -35,6 +35,61 @@ class HttpConfig(TypedDict, total=False):
     """Custom CORS configuration"""
 
 
+class GraphEntry(TypedDict, total=False):
+    """The object form of a graph entry in the ``graphs`` section.
+
+    ``path`` is required; ``description`` is optional metadata that flows into
+    the graph's default assistant (created/synced at startup).
+    """
+
+    path: str
+    description: str | None
+
+
+class GraphRegistryEntry(TypedDict, total=False):
+    """The normalized form ``langgraph_service`` consumes."""
+
+    file_path: str
+    export_name: str
+    description: str
+
+
+def parse_graph_entry(graph_id: str, graph_config: object) -> GraphRegistryEntry:
+    """Validate and normalize one ``graphs`` entry (string or object form).
+
+    String form: ``"./graphs/weather_agent.py:graph"``. Object form:
+    ``{"path": "./graphs/weather_agent.py:graph", "description": "..."}``.
+    Anything else is a config error and fails the boot, not the first run.
+    """
+    description: str | None = None
+    if isinstance(graph_config, str):
+        graph_path = graph_config
+    elif isinstance(graph_config, dict):
+        if "path" not in graph_config:
+            raise ValueError(f"Graph '{graph_id}' configuration is missing required 'path'")
+        graph_path_raw = graph_config["path"]
+        if not isinstance(graph_path_raw, str):
+            raise ValueError(f"Graph '{graph_id}' field 'path' must be a string")
+        graph_path = graph_path_raw
+        raw_description = graph_config.get("description")
+        if raw_description is not None and not isinstance(raw_description, str):
+            raise ValueError(f"Graph '{graph_id}' field 'description' must be a string or null")
+        description = raw_description
+    else:
+        raise ValueError(f"Graph '{graph_id}' configuration must be a string or object")
+
+    if ":" not in graph_path:
+        raise ValueError(f"Invalid graph path format for '{graph_id}': {graph_path}")
+    file_path, export_name = graph_path.split(":", 1)
+    if not file_path or not export_name:
+        raise ValueError(f"Invalid graph path format for '{graph_id}': {graph_path}")
+
+    entry = GraphRegistryEntry(file_path=file_path, export_name=export_name)
+    if description is not None:
+        entry["description"] = description
+    return entry
+
+
 class StoreIndexConfig(TypedDict, total=False):
     """Configuration for vector embeddings in store.
 

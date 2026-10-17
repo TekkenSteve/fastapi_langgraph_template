@@ -3,7 +3,8 @@
 import json
 import sys
 from pathlib import Path
-from unittest.mock import Mock, mock_open, patch
+from unittest.mock import MagicMock, Mock, mock_open, patch
+from uuid import uuid5
 
 import pytest
 from langchain_core.callbacks import BaseCallbackHandler, CallbackManager
@@ -12,6 +13,7 @@ from langgraph.graph import START, MessagesState, StateGraph
 
 # Import the settings singleton directly to patch it
 from agent_server.config import graph_config as config_module
+from agent_server.config.constants import ASSISTANT_NAMESPACE_UUID
 from agent_server.config.settings import settings
 from agent_server.repo.graphs.langgraph_service import (
     LangGraphService,
@@ -1088,3 +1090,141 @@ class TestCopyGraphConfig:
             assert graph.config["callbacks"][0] is handler
             assert graph.config["metadata"] == {"team": "a"}
             assert graph.config["metadata"] is not base.config["metadata"]
+
+
+class TestDefaultAssistantDescriptionSync:
+    """Startup sync: the configured description reaches the default assistant,
+    and history is preserved instead of edited in place."""
+
+    @pytest.fixture
+    def session(self, monkeypatch):
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        from agent_server.repo import orm as orm_mod
+
+        mock_session = MagicMock(spec=AsyncSession)  # spec'd: async methods become AsyncMock
+
+        async def get_session():
+            yield mock_session
+
+        monkeypatch.setattr(orm_mod, "get_session", get_session)
+        return mock_session
+
+    @staticmethod
+    def _service(config: object) -> LangGraphService:
+        service = LangGraphService()
+        service.config = {"graphs": {"agent": config}}
+        service._load_graph_registry()
+        return service
+
+    @pytest.mark.parametrize(
+        ("entry", "expected"),
+        [
+            ("./agent.py:graph", "Default assistant for graph 'agent'"),
+            ({"path": "./agent.py:graph"}, "Default assistant for graph 'agent'"),
+            ({"path": "./agent.py:graph", "description": None}, "Default assistant for graph 'agent'"),
+            ({"path": "./agent.py:graph", "description": "Configured"}, "Configured"),
+            ({"path": "./agent.py:graph", "description": ""}, ""),
+        ],
+    )
+    async def test_creates_default_assistant_and_version_with_the_configured_description(
+        self, session, entry: object, expected: str
+    ):
+        service = self._service(entry)
+        session.scalar.return_value = None
+
+        await service._ensure_default_assistants()
+
+        assistant, version = [call.args[0] for call in session.add.call_args_list]
+        assert assistant.description == expected
+        assert version.description == expected
+        assert version.version == 1
+        session.commit.assert_awaited_once()
+        session.close.assert_awaited_once()
+
+    @pytest.mark.parametrize(
+        ("entry", "expected"),
+        [
+            ({"path": "./agent.py:graph", "description": "New"}, "New"),
+            ({"path": "./agent.py:graph", "description": ""}, ""),
+        ],
+    )
+    async def test_a_changed_description_creates_a_new_version_and_keeps_the_rest(
+        self, session, entry: object, expected: str
+    ):
+        """The description a run was started with must stay recoverable."""
+        from agent_server.repo.orm import Assistant as AssistantORM
+        from agent_server.repo.orm import AssistantVersion as AssistantVersionORM
+
+        assistant_id = str(uuid5(ASSISTANT_NAMESPACE_UUID, "agent"))
+        existing = AssistantORM(
+            assistant_id=assistant_id,
+            graph_id="agent",
+            name="Custom name",
+            description="Old",
+            version=3,
+            config={"configurable": {"temperature": 0.5}},
+            context={},
+            metadata_dict={"created_by": "system", "custom": True},
+            user_id="system",
+        )
+        service = self._service(entry)
+        # first scalar: the assistant; second: the max existing version (5)
+        session.scalar.side_effect = [existing, 5]
+
+        await service._ensure_default_assistants()
+
+        assert existing.description == expected
+        assert existing.version == 6  # max(3, 5) + 1
+        assert existing.name == "Custom name"
+        assert existing.config == {"configurable": {"temperature": 0.5}}
+        assert existing.metadata_dict == {"created_by": "system", "custom": True}
+        session.add.assert_called_once()
+        version_row = session.add.call_args.args[0]
+        assert isinstance(version_row, AssistantVersionORM)
+        assert version_row.version == 6
+        assert version_row.description == expected
+        assert version_row.name == "Custom name"
+        session.commit.assert_awaited_once()
+
+    async def test_an_unchanged_description_is_a_noop(self, session):
+        from agent_server.repo.orm import Assistant as AssistantORM
+
+        assistant_id = str(uuid5(ASSISTANT_NAMESPACE_UUID, "agent"))
+        existing = AssistantORM(
+            assistant_id=assistant_id,
+            graph_id="agent",
+            name="agent",
+            description="Configured",
+            version=3,
+            user_id="system",
+        )
+        service = self._service({"path": "./agent.py:graph", "description": "Configured"})
+        session.scalar.return_value = existing
+
+        await service._ensure_default_assistants()
+
+        session.add.assert_not_called()
+        assert existing.version == 3
+        session.commit.assert_awaited_once()
+
+    async def test_a_user_owned_assistant_with_the_default_id_is_left_alone(self, session):
+        """A collision with the deterministic id must not be overwritten or synced."""
+        from agent_server.repo.orm import Assistant as AssistantORM
+
+        assistant_id = str(uuid5(ASSISTANT_NAMESPACE_UUID, "agent"))
+        existing = AssistantORM(
+            assistant_id=assistant_id,
+            graph_id="agent",
+            name="agent",
+            description="The user's own",
+            version=1,
+            user_id="someone-else",
+        )
+        service = self._service({"path": "./agent.py:graph", "description": "Configured"})
+        session.scalar.return_value = existing
+
+        await service._ensure_default_assistants()
+
+        session.add.assert_not_called()
+        assert existing.description == "The user's own"

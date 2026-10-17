@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from agent_server.config.graph_config import load_checkpointer_config, load_http_config, load_store_config
+from agent_server.config.graph_config import (
+    load_checkpointer_config,
+    load_http_config,
+    load_store_config,
+    parse_graph_entry,
+)
 from agent_server.config.settings import settings
 
 
@@ -201,3 +206,42 @@ def test_load_checkpointer_config_no_config(tmp_path: Path, monkeypatch: pytest.
     config = load_checkpointer_config()
 
     assert config is None
+
+
+class TestGraphEntryParsing:
+    """The graphs section accepts a string or an object with path/description."""
+
+    def test_string_form(self) -> None:
+        entry = parse_graph_entry("agent", "./graphs/agent.py:graph")
+
+        assert entry == {"file_path": "./graphs/agent.py", "export_name": "graph"}
+
+    def test_object_form_with_description(self) -> None:
+        entry = parse_graph_entry("agent", {"path": "./graphs/agent.py:graph", "description": "ReAct agent"})
+
+        assert entry == {
+            "file_path": "./graphs/agent.py",
+            "export_name": "graph",
+            "description": "ReAct agent",
+        }
+
+    def test_null_description_is_absent(self) -> None:
+        entry = parse_graph_entry("agent", {"path": "./graphs/agent.py:graph", "description": None})
+
+        assert "description" not in entry
+
+    @pytest.mark.parametrize(
+        ("raw", "message"),
+        [
+            ({"description": "Missing path"}, "missing required 'path'"),
+            ({"path": 42}, "field 'path' must be a string"),
+            ({"path": "./agent.py:graph", "description": 42}, "field 'description' must be a string"),
+            (42, "configuration must be a string or object"),
+            ({"path": "./agent.py"}, "Invalid graph path format"),
+            ({"path": ":graph"}, "Invalid graph path format"),
+            ({"path": "./agent.py:"}, "Invalid graph path format"),
+        ],
+    )
+    def test_invalid_entries_fail_loudly(self, raw: object, message: str) -> None:
+        with pytest.raises(ValueError, match=message):
+            parse_graph_entry("broken", raw)

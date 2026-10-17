@@ -14,6 +14,7 @@ import json
 import sys
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypeVar
 from uuid import uuid5
@@ -201,12 +202,15 @@ class LangGraphService:
         add_dependency_paths(self.config.get("dependencies", []), config_dir)
 
     async def _ensure_default_assistants(self) -> None:
-        """Create a default assistant per graph with deterministic UUID.
+        """Create a default assistant per graph and sync its configured description.
 
-        Uses uuid5 with a fixed namespace so that the same graph_id maps
-        to the same assistant_id across restarts. Idempotent.
+        Uses uuid5 with a fixed namespace so the same graph_id maps to the same
+        assistant_id across restarts. When the registry's description changed, a
+        system-owned default gets a new version (the old one stays in the version
+        history) rather than being edited in place; a user-owned assistant that
+        collides with the deterministic id is left alone. Idempotent.
         """
-        from sqlalchemy import select
+        from sqlalchemy import func, select
 
         from agent_server.repo.orm import Assistant as AssistantORM
         from agent_server.repo.orm import AssistantVersion as AssistantVersionORM
@@ -217,16 +221,45 @@ class LangGraphService:
         session_gen = get_session()
         session = await anext(session_gen)
         try:
-            for graph_id in self._graph_registry:
+            for graph_id, graph_config in self._graph_registry.items():
                 assistant_id = str(uuid5(NS, graph_id))
-                existing = await session.scalar(select(AssistantORM).where(AssistantORM.assistant_id == assistant_id))
+                description = graph_config.get("description", f"Default assistant for graph '{graph_id}'")
+                existing = await session.scalar(
+                    select(AssistantORM).where(AssistantORM.assistant_id == assistant_id).with_for_update()
+                )
                 if existing:
+                    if existing.user_id == "system" and existing.description != description:
+                        # New version row, not an in-place edit: the description a
+                        # run was started with must stay recoverable.
+                        max_version = await session.scalar(
+                            select(func.max(AssistantVersionORM.version)).where(
+                                AssistantVersionORM.assistant_id == assistant_id
+                            )
+                        )
+                        new_version = max(existing.version, max_version or 0) + 1
+                        now = datetime.now(UTC)
+                        session.add(
+                            AssistantVersionORM(
+                                assistant_id=assistant_id,
+                                version=new_version,
+                                name=existing.name,
+                                description=description,
+                                graph_id=existing.graph_id,
+                                config=existing.config,
+                                context=existing.context,
+                                metadata_dict=existing.metadata_dict,
+                                created_at=now,
+                            )
+                        )
+                        existing.description = description
+                        existing.version = new_version
+                        existing.updated_at = now
                     continue
                 session.add(
                     AssistantORM(
                         assistant_id=assistant_id,
                         name=graph_id,
-                        description=f"Default assistant for graph '{graph_id}'",
+                        description=description,
                         graph_id=graph_id,
                         config={},
                         user_id="system",
@@ -238,7 +271,7 @@ class LangGraphService:
                         assistant_id=assistant_id,
                         version=1,
                         name=graph_id,
-                        description=f"Default assistant for graph '{graph_id}'",
+                        description=description,
                         graph_id=graph_id,
                         metadata_dict={"created_by": "system"},
                     )

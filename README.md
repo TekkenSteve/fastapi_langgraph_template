@@ -114,6 +114,8 @@ Two files:
 
 `GRAPHS_CONFIG` env var points at a different config file when needed (e.g. `langgraph.auth.json` for the auth-enabled stack).
 
+A graph entry is either the path string above or an object form with metadata — `"shopping_agent": {"path": "./src/graphs/shopping_agent/graph.py:graph", "description": "…"}`. The description is synced into the graph's default assistant at startup (a changed one bumps its version; the old description stays in the version history).
+
 ## Common tasks
 
 | Task | Command |
