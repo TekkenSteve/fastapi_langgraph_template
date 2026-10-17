@@ -83,3 +83,15 @@ class TestThreadSearchRequestStatusValidation:
         """Test that ThreadSearchRequest rejects invalid status values."""
         with pytest.raises(ValueError, match="Invalid thread status"):
             ThreadSearchRequest(status="invalid_status")
+
+
+class TestThreadSearchSelectValidation:
+    """ThreadSearchRequest must not silently ignore a projection we never apply."""
+
+    def test_search_rejects_a_select_projection(self):
+        with pytest.raises(ValueError, match="select projection is not supported"):
+            ThreadSearchRequest(select=["thread_id"])
+
+    def test_search_accepts_absent_or_null_select(self):
+        assert ThreadSearchRequest().select is None
+        assert ThreadSearchRequest(select=None).select is None

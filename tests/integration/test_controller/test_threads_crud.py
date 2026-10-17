@@ -572,6 +572,16 @@ class TestSearchThreads:
         data = resp.json()
         assert isinstance(data, list)
 
+    def test_search_rejects_an_unsupported_select_projection(self, client):
+        """A non-null select must fail closed: returning 200 with the default
+        shape would tell the client the projection it asked for happened."""
+        resp = client.post("/threads/search", json={"select": ["thread_id"]})
+        assert resp.status_code == 422
+
+    def test_search_accepts_a_null_select(self, client):
+        resp = client.post("/threads/search", json={"select": None})
+        assert resp.status_code == 200
+
     def test_search_threads_with_metadata(self, client):
         """Test searching with metadata filter"""
         resp = client.post(
