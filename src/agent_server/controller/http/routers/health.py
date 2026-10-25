@@ -2,6 +2,7 @@
 
 import contextlib
 
+import structlog
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -12,6 +13,7 @@ from agent_server.domain.errors import UNAVAILABLE
 from agent_server.repo.database import db_manager
 from agent_server.usecase.capabilities import build_capability_report
 
+logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["Health"])
 
 
@@ -126,7 +128,10 @@ async def readiness_check(_request: Request) -> dict[str, str]:
         async with db_manager.engine.begin() as conn:
             await conn.execute(text("SELECT 1"))
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Service not ready - database error: {str(e)}") from e
+        # The exception text can carry the DSN (host, database) and SQL; the
+        # probe response must not hand that to whoever can reach it.
+        logger.warning("readiness check failed: database", exc_info=True)
+        raise HTTPException(status_code=503, detail="Service not ready - database error") from e
 
     # Check that LangGraph components can be obtained (lazy init) and respond
     try:
@@ -138,9 +143,10 @@ async def readiness_check(_request: Request) -> dict[str, str]:
         with contextlib.suppress(Exception):
             await store.aget(("ready",), "check")
     except Exception as e:
+        logger.warning("readiness check failed: components", exc_info=True)
         raise HTTPException(
             status_code=503,
-            detail=f"Service not ready - components unavailable: {str(e)}",
+            detail="Service not ready - components unavailable",
         ) from e
 
     return {"status": "ready"}
