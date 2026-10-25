@@ -1,8 +1,10 @@
 name: E2E
 
 # E2E tests need a real OPENAI_API_KEY (the example ReAct agents call a live
-# LLM). Set it as a repo secret, then trigger manually. Nightly scheduling is
-# left out on purpose for a template — enable it if you want it.
+# LLM). Prefer an environment secret (`environment: e2e` below) over a repo
+# secret: a workflow dispatched from any branch can read repo secrets, while an
+# environment secret is only handed to the jobs that declare it. Nightly
+# scheduling is left out on purpose for a template — enable it if you want it.
 on:
   workflow_dispatch:
     inputs:
@@ -24,6 +26,8 @@ jobs:
   e2e:
     name: e2e (${{ inputs.mode }})
     runs-on: ubuntu-latest
+    # Scopes OPENAI_API_KEY to this job when it is set as an environment secret.
+    environment: e2e
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
