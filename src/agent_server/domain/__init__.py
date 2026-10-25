@@ -34,6 +34,7 @@ from agent_server.domain.threads import (
     ThreadCreate,
     ThreadHistoryRequest,
     ThreadList,
+    ThreadPruneRequest,
     ThreadPruneResponse,
     ThreadSearchRequest,
     ThreadSearchResponse,
@@ -65,6 +66,7 @@ __all__ = [
     "ThreadCheckpoint",
     "ThreadCheckpointPostRequest",
     "ThreadHistoryRequest",
+    "ThreadPruneRequest",
     "ThreadPruneResponse",
     "ThreadTTLSpec",
     # Runs

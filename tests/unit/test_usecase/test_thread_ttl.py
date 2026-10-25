@@ -13,6 +13,7 @@ from sqlalchemy.dialects import postgresql
 
 from agent_server.config.settings import settings
 from agent_server.infra.observability.metrics import THREAD_TTL_SWEPT
+from agent_server.usecase import thread_ttl as thread_ttl_module
 from agent_server.usecase.thread_ttl import (
     ThreadTTLConfig,
     ThreadTTLSweeper,
@@ -21,6 +22,7 @@ from agent_server.usecase.thread_ttl import (
     _process_expired_batch,
     get_thread_ttl_config,
     prune_expired_threads_for_user,
+    prune_threads_by_id,
 )
 
 
@@ -512,3 +514,82 @@ class TestPruneForUser:
         claim_sql = str(mock_batch.await_args_list[0].args[1].compile(dialect=postgresql.dialect()))
         assert "thread.user_id" in claim_sql
         assert "FOR UPDATE OF thread_ttl, thread SKIP LOCKED" in claim_sql
+
+
+class TestPruneById:
+    """prune_threads_by_id prunes only the caller's lockable, idle threads."""
+
+    @staticmethod
+    def _session(owned: list[str]) -> AsyncMock:
+        session = AsyncMock()
+        result = MagicMock()
+        result.all.return_value = owned
+        session.scalars.return_value = result
+        return session
+
+    @pytest.mark.asyncio
+    async def test_claim_is_user_scoped_skips_active_runs_and_locks(self) -> None:
+        session = self._session([])
+        db = MagicMock(get_checkpointer=MagicMock(return_value=AsyncMock()))
+        with patch.object(thread_ttl_module, "db_manager", db):
+            await prune_threads_by_id(session, thread_ids=["t-1"], strategy="delete", user_id="u-1")
+
+        sql = str(session.scalars.await_args.args[0].compile(dialect=postgresql.dialect()))
+        assert "thread.user_id = " in sql
+        assert "NOT (EXISTS" in sql
+        assert "FOR UPDATE OF thread SKIP LOCKED" in sql
+
+    @pytest.mark.asyncio
+    async def test_delete_removes_checkpoints_then_thread_rows(self) -> None:
+        checkpointer = AsyncMock()
+        session = self._session(["t-1", "t-2"])
+
+        with patch.object(
+            thread_ttl_module, "db_manager", MagicMock(get_checkpointer=MagicMock(return_value=checkpointer))
+        ):
+            count = await prune_threads_by_id(
+                session, thread_ids=["t-1", "t-2", "t-x"], strategy="delete", user_id="u-1"
+            )
+
+        assert count == 2
+        checkpointer.aprune.assert_awaited_once_with(["t-1", "t-2"], strategy="delete")
+        delete_sql = str(session.execute.await_args.args[0].compile(dialect=postgresql.dialect()))
+        assert delete_sql.startswith("DELETE FROM thread")
+        session.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_keep_latest_does_not_count_delta_channel_threads(self) -> None:
+        """A skipped thread was not pruned, so pruned_count must not include it."""
+        checkpointer = AsyncMock()
+        checkpointer.aprune.side_effect = [None, NotImplementedError("DeltaChannel")]
+        session = self._session(["t-plain", "t-delta"])
+
+        with patch.object(
+            thread_ttl_module, "db_manager", MagicMock(get_checkpointer=MagicMock(return_value=checkpointer))
+        ):
+            count = await prune_threads_by_id(
+                session, thread_ids=["t-plain", "t-delta"], strategy="keep_latest", user_id="u-1"
+            )
+
+        assert count == 1
+        session.execute.assert_not_awaited()
+        session.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_auth_filter_is_applied_to_the_claim(self) -> None:
+        from agent_server.repo.orm import Thread as ThreadORM
+
+        session = self._session([])
+        db = MagicMock(get_checkpointer=MagicMock(return_value=AsyncMock()))
+
+        with patch.object(thread_ttl_module, "db_manager", db):
+            await prune_threads_by_id(
+                session,
+                thread_ids=["t-1"],
+                strategy="keep_latest",
+                user_id="u-1",
+                auth_filter=ThreadORM.metadata_json["team"].astext == "alpha",
+            )
+
+        sql = str(session.scalars.await_args.args[0].compile(dialect=postgresql.dialect()))
+        assert "thread.metadata_json ->> " in sql

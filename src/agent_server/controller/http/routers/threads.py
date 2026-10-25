@@ -9,7 +9,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from langchain_core.runnables import RunnableConfig
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -25,6 +25,7 @@ from agent_server.domain import (
     ThreadCreate,
     ThreadHistoryRequest,
     ThreadList,
+    ThreadPruneRequest,
     ThreadPruneResponse,
     ThreadSearchRequest,
     ThreadState,
@@ -46,7 +47,7 @@ from agent_server.repo.orm import _get_session_maker, get_session
 from agent_server.usecase.execution.active_runs import active_runs
 from agent_server.usecase.streaming.streaming_service import streaming_service
 from agent_server.usecase.thread_state_service import ThreadStateService
-from agent_server.usecase.thread_ttl import get_thread_ttl_config, prune_expired_threads_for_user
+from agent_server.usecase.thread_ttl import get_thread_ttl_config, prune_expired_threads_for_user, prune_threads_by_id
 
 router = APIRouter(tags=["Threads"], dependencies=auth_dependency)
 logger = structlog.getLogger(__name__)
@@ -928,22 +929,36 @@ async def delete_thread(
 
 @router.post("/threads/prune", response_model=ThreadPruneResponse)
 async def prune_threads(
+    request: ThreadPruneRequest | None = Body(None),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> ThreadPruneResponse:
-    """Immediately apply TTL policies to the caller's expired threads.
+    """Prune threads by id, or apply TTL policies to the caller's expired threads.
 
-    Threads whose TTL has expired are deleted (strategy `delete`) or have
-    their checkpoint history compacted (strategy `keep_latest`). Threads with
-    active runs are skipped and handled once their runs settle.
+    With a body, each listed thread is deleted (strategy `delete`) or has its
+    checkpoint history compacted (strategy `keep_latest`). Without a body,
+    threads whose TTL has expired get their own TTL strategy. Threads with
+    active runs are skipped either way.
     """
     # Authorization check — pruning is a bulk threads.delete
     ctx = build_auth_context(user, "threads", "delete")
-    filters = await handle_event(ctx, {})
+    filters = await handle_event(ctx, {"thread_ids": request.thread_ids} if request else {})
     auth_filter = build_metadata_filter(ThreadORM.metadata_json, filters)
 
-    deleted, pruned = await prune_expired_threads_for_user(session, user_id=user.identity, auth_filter=auth_filter)
-    return ThreadPruneResponse(deleted=deleted, pruned=pruned)
+    if request is None:
+        deleted, pruned = await prune_expired_threads_for_user(session, user_id=user.identity, auth_filter=auth_filter)
+        return ThreadPruneResponse(pruned_count=deleted + pruned, deleted=deleted, pruned=pruned)
+
+    count = await prune_threads_by_id(
+        session,
+        thread_ids=request.thread_ids,
+        strategy=request.strategy,
+        user_id=user.identity,
+        auth_filter=auth_filter,
+    )
+    if request.strategy == "delete":
+        return ThreadPruneResponse(pruned_count=count, deleted=count)
+    return ThreadPruneResponse(pruned_count=count, pruned=count)
 
 
 @router.post("/threads/search", response_model=list[Thread])
