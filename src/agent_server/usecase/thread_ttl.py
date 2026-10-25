@@ -104,14 +104,16 @@ async def _apply_strategy(
 ) -> str:
     """Apply one expired row's strategy inside the claim transaction; return the outcome label."""
     if strategy == "keep_latest":
-        await _prune_checkpoint_history(thread_id)
+        pruned = await _prune_checkpoint_history(thread_id)
         # Re-arm: keep_latest is periodic compaction, not a one-shot.
         await session.execute(
             update(ThreadTTLORM)
             .where(ThreadTTLORM.thread_id == thread_id)
             .values(expires_at=now + timedelta(minutes=ttl_minutes))
         )
-        return "pruned"
+        # A refused DeltaChannel is re-armed (so it is not retried every tick)
+        # but not counted as pruned: nothing was pruned.
+        return "pruned" if pruned else "skipped"
 
     # Checkpoints first — ordering rationale from the delete_thread route: a
     # failure here leaves the thread row intact and retryable, never orphans.
@@ -198,7 +200,7 @@ async def _process_expired_batch(
             continue
         if outcome == "deleted":
             deleted += 1
-        else:
+        elif outcome == "pruned":
             pruned += 1
         THREAD_TTL_SWEPT.labels(outcome=outcome).inc()
 

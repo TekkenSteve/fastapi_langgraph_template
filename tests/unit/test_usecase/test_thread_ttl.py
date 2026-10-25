@@ -305,7 +305,8 @@ class TestKeepLatest:
                 session, thread_id="t-1", strategy="keep_latest", ttl_minutes=30.0, now=datetime.now(UTC)
             )
 
-        assert outcome == "pruned"
+        # Nothing was pruned, so the sweep must not report it as pruned.
+        assert outcome == "skipped"
         self._assert_rearmed(session)
 
     @pytest.mark.asyncio
@@ -362,6 +363,31 @@ class TestFailureIsolation:
 
         assert (claimed, deleted, pruned, failed_ids) == (0, 0, 0, [])
         session.commit.assert_not_awaited()
+
+
+class TestSweepMetricForSkippedThreads:
+    """A refused DeltaChannel is counted as skipped, never as pruned."""
+
+    @pytest.mark.asyncio
+    async def test_delta_channel_skip_counts_as_skipped(self) -> None:
+        checkpointer = AsyncMock()
+        checkpointer.aprune.side_effect = NotImplementedError("DeltaChannel")
+        db = MagicMock()
+        db.get_checkpointer.return_value = checkpointer
+
+        claim_result = MagicMock()
+        claim_result.all.return_value = [("t-delta", "keep_latest", 5.0)]
+        session = AsyncMock()
+        session.execute.side_effect = [claim_result, MagicMock()]
+
+        pruned_before = _swept_count("pruned")
+        skipped_before = _swept_count("skipped")
+        with patch("agent_server.usecase.thread_ttl.db_manager", db):
+            claimed, deleted, pruned, failed_ids = await _process_expired_batch(session, MagicMock(), datetime.now(UTC))
+
+        assert (claimed, deleted, pruned, failed_ids) == (1, 0, 0, [])
+        assert _swept_count("skipped") == skipped_before + 1
+        assert _swept_count("pruned") == pruned_before
 
 
 class TestSweepLimit:

@@ -33,11 +33,12 @@ THREAD_TTL_SWEPT = prometheus_client.Counter(
     "agent_server_thread_ttl_swept_threads_total",
     "Threads processed by the TTL sweep or POST /threads/prune, by outcome: "
     "deleted (strategy=delete, thread removed), pruned (strategy=keep_latest, "
-    "history compacted), error (item failed and will be retried next tick).",
+    "history compacted), skipped (the checkpointer refused — a DeltaChannel "
+    "thread), error (item failed and will be retried next tick).",
     labelnames=["outcome"],
 )
 
-for _outcome in ("deleted", "pruned", "error"):
+for _outcome in ("deleted", "pruned", "skipped", "error"):
     THREAD_TTL_SWEPT.labels(outcome=_outcome)
 
 
