@@ -1,6 +1,6 @@
 """Unit tests for RedisManager"""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import redis.asyncio as aioredis
@@ -22,7 +22,9 @@ class TestRedisManager:
         manager = RedisManager()
 
         mock_client = AsyncMock()
-        mock_pool = AsyncMock()
+        # MagicMock, not AsyncMock: the pool object is not awaited, and an
+        # AsyncMock turns connection_kwargs.update() into an unawaited coroutine.
+        mock_pool = MagicMock()
 
         with (
             patch("agent_server.infra.redis.aioredis.ConnectionPool") as mock_pool_cls,

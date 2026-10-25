@@ -118,7 +118,7 @@ async def test_auth_filter_narrows_the_claim(sessions: SessionFactory) -> None:
     tagged = await _create_thread(sessions, _OWNER)
     async with sessions() as session:
         await session.execute(
-            text('UPDATE thread SET metadata = \'{"team": "alpha"}\'::jsonb WHERE thread_id = :tid'),
+            text('UPDATE thread SET metadata_json = \'{"team": "alpha"}\'::jsonb WHERE thread_id = :tid'),
             {"tid": tagged},
         )
         await session.commit()
