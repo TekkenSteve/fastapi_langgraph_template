@@ -26,11 +26,14 @@ dependencies = [
     # >=4.14.2: GHSA fix floor carried by the upstream security bump.
     "anyio>=4.14.2",
     # LangGraph
-    "langgraph>=1.0.3",
+    "langgraph>=1.2.16",
     "langgraph-sdk>=0.3.5",
+    # >=3.2.0: aprune(strategy="keep_latest") — the checkpointer prunes history
+    # itself (DeltaChannel-aware, subgraph-namespace-correct) instead of this
+    # server hand-writing SQL against tables it does not own.
     # >=3.1.1: langgraph-checkpoint-postgres < 3.1.1 matched scoped store reads
     # with an unescaped LIKE prefix (GHSA-47pj-3jcm-6whg).
-    "langgraph-checkpoint-postgres>=3.1.1",
+    "langgraph-checkpoint-postgres>=3.2.0",
     # Database
     "sqlalchemy>=2.0.0",
     "greenlet>=3.1.0",
