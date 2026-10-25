@@ -392,10 +392,25 @@ class WorkerSettings(EnvBase):
     REAPER_INTERVAL_SECONDS: int = 15
     STUCK_PENDING_THRESHOLD_SECONDS: int = 120
     POSTGRES_POLL_INTERVAL_SECONDS: int = 5
+    # How long the worker's BLPOP blocks server-side. 0 would block forever, so
+    # no finite read timeout could outlast it — rejected below.
+    BLPOP_TIMEOUT_SECONDS: float = 5.0
+    # The blocking pool's read timeout. Must exceed the BLPOP block by a clear
+    # margin: a job popped at the end of the block must not be lost to a client
+    # read timeout that fired first.
+    BLOCKING_SOCKET_TIMEOUT_SECONDS: float = 15.0
 
     @model_validator(mode="after")
     def _validate_lease_timing(self) -> "WorkerSettings":
         """Ensure the worker lease safely outlives missed heartbeat intervals."""
+        if self.BLOCKING_SOCKET_TIMEOUT_SECONDS < self.BLPOP_TIMEOUT_SECONDS + 5:
+            raise ValueError(
+                f"BLOCKING_SOCKET_TIMEOUT_SECONDS ({self.BLOCKING_SOCKET_TIMEOUT_SECONDS}) must exceed "
+                f"BLPOP_TIMEOUT_SECONDS ({self.BLPOP_TIMEOUT_SECONDS}) by at least 5s, or a job popped "
+                f"at the end of the block can be lost with the timed-out connection."
+            )
+        if self.BLPOP_TIMEOUT_SECONDS <= 0:
+            raise ValueError("BLPOP_TIMEOUT_SECONDS must be positive (0 blocks forever server-side)")
         if self.LEASE_DURATION_SECONDS <= 2 * self.HEARTBEAT_INTERVAL_SECONDS:
             raise ValueError(
                 f"LEASE_DURATION_SECONDS ({self.LEASE_DURATION_SECONDS}) must be "

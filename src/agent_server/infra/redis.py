@@ -24,6 +24,8 @@ class RedisManager:
     def __init__(self) -> None:
         self._pool: aioredis.ConnectionPool | None = None
         self._client: aioredis.Redis | None = None
+        self._blocking_pool: aioredis.ConnectionPool | None = None
+        self._blocking_client: aioredis.Redis | None = None
 
     async def initialize(self) -> None:
         """Create connection pool and verify connectivity."""
@@ -45,13 +47,38 @@ class RedisManager:
         )
         self._client = aioredis.Redis(connection_pool=self._pool)
 
+        # BLPOP needs a read timeout longer than its block, and must not retry:
+        # a reissued BLPOP discards the reply of a job the first attempt already
+        # popped, so errors surface here and the worker polls Postgres instead.
+        self._blocking_pool = aioredis.ConnectionPool.from_url(
+            settings.redis.REDIS_URL,
+            max_connections=settings.worker.WORKER_COUNT + 2,
+            decode_responses=True,
+            health_check_interval=settings.redis.REDIS_HEALTH_CHECK_INTERVAL,
+        )
+        # Set after from_url: socket_timeout / retry_on_timeout query params in
+        # REDIS_URL override from_url kwargs and would reintroduce the race.
+        self._blocking_pool.connection_kwargs.update(
+            socket_timeout=settings.worker.BLOCKING_SOCKET_TIMEOUT_SECONDS,
+            retry=None,
+            retry_on_timeout=False,
+            retry_on_error=[],
+        )
+        self._blocking_client = aioredis.Redis(connection_pool=self._blocking_pool)
+
         await self._client.ping()  # type: ignore[invalid-await]  # redis.asyncio stubs
         # Log only host info, not full URL which may contain credentials
         parsed = urlparse(settings.redis.REDIS_URL)
         logger.info("Redis broker initialized", host=parsed.hostname, port=parsed.port)
 
     async def close(self) -> None:
-        """Close Redis connection pool."""
+        """Close Redis connection pools."""
+        if self._blocking_client:
+            await self._blocking_client.aclose()
+            self._blocking_client = None
+        if self._blocking_pool:
+            await self._blocking_pool.disconnect()
+            self._blocking_pool = None
         if self._client:
             await self._client.aclose()
             self._client = None
@@ -65,6 +92,12 @@ class RedisManager:
         if self._client is None:
             raise RuntimeError("Redis not initialized. Set REDIS_BROKER_ENABLED=true and ensure Redis is running.")
         return self._client
+
+    def get_blocking_client(self) -> aioredis.Redis:
+        """The client for blocking commands, whose read timeout outlasts the block."""
+        if self._blocking_client is None:
+            raise RuntimeError("Redis not initialized. Set REDIS_BROKER_ENABLED=true and ensure Redis is running.")
+        return self._blocking_client
 
 
 # Global Redis manager instance

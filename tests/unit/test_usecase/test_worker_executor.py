@@ -8,6 +8,7 @@ import pytest
 from redis import ConnectionError as RedisConnectionError
 from redis import TimeoutError as RedisTimeoutError
 
+from agent_server.config.settings import settings
 from agent_server.domain.user import User
 from agent_server.usecase.execution.active_runs import active_runs, explicit_run_cancellations
 from agent_server.usecase.execution.run_executor import _shutdown_cancellations, _timeout_cancellations
@@ -859,10 +860,13 @@ class TestDequeue:
         blpop = AsyncMock(return_value=("agent_server:worker:queue", "run-123"))
         executor = self._make_executor_with_blpop(blpop)
 
-        with patch(f"{MODULE}.redis_manager.get_client", return_value=self._client):
+        with (
+            patch(f"{MODULE}.redis_manager.get_blocking_client", return_value=self._client),
+        ):
             result = await executor._dequeue()
 
         assert result == "run-123"
+        assert blpop.await_args.kwargs["timeout"] == settings.worker.BLPOP_TIMEOUT_SECONDS
         executor._poll_postgres.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -870,29 +874,30 @@ class TestDequeue:
         blpop = AsyncMock(return_value=None)
         executor = self._make_executor_with_blpop(blpop)
 
-        with patch(f"{MODULE}.redis_manager.get_client", return_value=self._client):
+        with patch(f"{MODULE}.redis_manager.get_blocking_client", return_value=self._client):
             result = await executor._dequeue()
 
         assert result is None
         executor._poll_postgres.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_idle_socket_timeout_returns_none_without_fallback(self) -> None:
-        """A blocking BLPOP that hits the socket timeout raises redis TimeoutError
-        (a RedisError subclass). That is a normal idle expiry, not a connectivity
-        failure: it must return None silently, never poll Postgres (GH #bug)."""
+    async def test_socket_timeout_falls_back_to_postgres(self) -> None:
+        """The blocking read timeout outlasts the block, so a timeout is a stall, not
+        an idle queue: the BLPOP may have popped a run whose reply was lost, so poll
+        Postgres for it instead of waiting for the lease reaper."""
         blpop = AsyncMock(side_effect=RedisTimeoutError("Timeout reading from redis:6379"))
         executor = self._make_executor_with_blpop(blpop)
 
         with (
-            patch(f"{MODULE}.redis_manager.get_client", return_value=self._client),
+            patch(f"{MODULE}.redis_manager.get_blocking_client", return_value=self._client),
+            patch(f"{MODULE}.asyncio.sleep", new_callable=AsyncMock),
             patch(f"{MODULE}.logger.warning") as mock_warning,
         ):
             result = await executor._dequeue()
 
-        assert result is None
-        executor._poll_postgres.assert_not_awaited()
-        mock_warning.assert_not_called()
+        assert result == "from-postgres"
+        executor._poll_postgres.assert_awaited_once()
+        mock_warning.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_connection_error_falls_back_to_postgres(self) -> None:
@@ -902,7 +907,7 @@ class TestDequeue:
         executor = self._make_executor_with_blpop(blpop)
 
         with (
-            patch(f"{MODULE}.redis_manager.get_client", return_value=self._client),
+            patch(f"{MODULE}.redis_manager.get_blocking_client", return_value=self._client),
             patch(f"{MODULE}.asyncio.sleep", new_callable=AsyncMock),
             patch(f"{MODULE}.logger.warning") as mock_warning,
         ):

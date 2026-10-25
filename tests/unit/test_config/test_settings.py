@@ -597,6 +597,8 @@ class TestWorkerSettingsLeaseValidation:
             "BG_JOB_TIMEOUT_SECS",
             "BG_JOB_MAX_RETRIES",
             "POSTGRES_POLL_INTERVAL_SECONDS",
+            "BLPOP_TIMEOUT_SECONDS",
+            "BLOCKING_SOCKET_TIMEOUT_SECONDS",
         ):
             monkeypatch.delenv(var, raising=False)
 
@@ -756,3 +758,50 @@ class TestNoStrayEnvironmentReads:
         if isinstance(key, ast.Constant) and isinstance(key.value, str):
             return [key.value]
         return []
+
+
+class TestWorkerSettingsBlockingTimeoutValidation:
+    """The blocking pool's read timeout must stay ahead of the BLPOP block."""
+
+    def test_rejects_a_read_timeout_that_does_not_outlast_the_block(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Read timeout == BLPOP block is the race that loses popped jobs."""
+        self._clear(monkeypatch)
+        monkeypatch.setenv("BLPOP_TIMEOUT_SECONDS", "5")
+        monkeypatch.setenv("BLOCKING_SOCKET_TIMEOUT_SECONDS", "5")
+
+        with pytest.raises(ValueError, match="BLOCKING_SOCKET_TIMEOUT_SECONDS.*must exceed"):
+            WorkerSettings(_env_file=None)
+
+    @pytest.mark.parametrize("value", ["0", "-1"])
+    def test_rejects_a_non_positive_blpop_timeout(self, monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+        """BLPOP with timeout 0 blocks forever, so no finite read timeout can outlast it."""
+        self._clear(monkeypatch)
+        monkeypatch.setenv("BLPOP_TIMEOUT_SECONDS", value)
+
+        with pytest.raises(ValueError, match="BLPOP_TIMEOUT_SECONDS"):
+            WorkerSettings(_env_file=None)
+
+    def test_the_default_read_timeout_outlasts_the_block(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._clear(monkeypatch)
+
+        ws = WorkerSettings(_env_file=None)
+
+        assert ws.BLOCKING_SOCKET_TIMEOUT_SECONDS >= ws.BLPOP_TIMEOUT_SECONDS + 5
+
+    @staticmethod
+    def _clear(monkeypatch: pytest.MonkeyPatch) -> None:
+        for var in (
+            "LEASE_DURATION_SECONDS",
+            "HEARTBEAT_INTERVAL_SECONDS",
+            "REAPER_INTERVAL_SECONDS",
+            "WORKER_COUNT",
+            "N_JOBS_PER_WORKER",
+            "WORKER_QUEUE_KEY",
+            "WORKER_DRAIN_TIMEOUT",
+            "BG_JOB_TIMEOUT_SECS",
+            "BG_JOB_MAX_RETRIES",
+            "POSTGRES_POLL_INTERVAL_SECONDS",
+            "BLPOP_TIMEOUT_SECONDS",
+            "BLOCKING_SOCKET_TIMEOUT_SECONDS",
+        ):
+            monkeypatch.delenv(var, raising=False)
