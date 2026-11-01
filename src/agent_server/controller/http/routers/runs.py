@@ -287,10 +287,12 @@ async def update_run(
 ) -> Run:
     """Update a run's status.
 
-    Primarily used to interrupt a running execution. Set `status` to
-    `"interrupted"` to cooperatively stop the run. When a live worker owns
-    the run, interruption is asynchronous and the response may still report
-    `pending` or `running`. Poll or stream the run until it becomes terminal.
+    Primarily used to stop a running execution. Set `status` to
+    `"interrupted"` to stop the run immediately and finalize it as
+    interrupted (there is no cooperative graph-level handling). When a live
+    worker owns the run, the stop is asynchronous and the response may still
+    report `pending` or `running`. Poll or stream the run until it becomes
+    terminal.
     """
     logger.info(f"[update_run] fetch for update run_id={run_id} thread_id={thread_id} user={user.identity}")
     run_orm = await session.scalar(
@@ -499,16 +501,20 @@ async def cancel_run_endpoint(
     ),
     action: RunCancellationAction = Query(
         "cancel",
-        description="Cancellation strategy: 'cancel' for hard cancel, 'interrupt' for cooperative interrupt.",
+        description=(
+            "Accepted for compatibility: 'cancel' and 'interrupt' both stop the run immediately "
+            "and finalize it as interrupted."
+        ),
     ),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> Run:
-    """Cancel or interrupt a running execution.
+    """Cancel a running execution.
 
-    Use `action=cancel` to hard-cancel the run immediately, or
-    `action=interrupt` to cooperatively interrupt (the graph can handle the
-    interrupt and save partial state). Set `wait=1` to wait up to 10 seconds
+    `action=cancel` and `action=interrupt` are currently aliases: both stop
+    the run immediately and finalize it as interrupted. Neither action
+    provides cooperative graph-level handling or guarantees saved partial
+    state. Set `wait=1` to wait up to 10 seconds
     for the background task to settle before returning the updated run. The
     response may still report `pending` or `running` if the timeout expires.
     Without `wait=1`, a live-owned run is cancelled asynchronously, so the
@@ -547,7 +553,10 @@ async def cancel_runs(
     request: RunsCancel,
     action: RunCancellationAction = Query(
         "interrupt",
-        description="Cancellation strategy: 'cancel' for hard cancel, 'interrupt' for cooperative interrupt.",
+        description=(
+            "Accepted for compatibility: 'cancel' and 'interrupt' both stop the run immediately "
+            "and finalize it as interrupted."
+        ),
     ),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
