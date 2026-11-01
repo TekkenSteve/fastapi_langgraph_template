@@ -14,6 +14,7 @@ from langchain_core.runnables import RunnableConfig
 
 from agent_server.auth.ctx import with_auth_ctx
 from agent_server.config.settings import settings
+from agent_server.infra.observability.otel import flush_otel_spans
 from agent_server.infra.redis import redis_manager
 from agent_server.repo.graphs.langgraph_service import create_run_config, get_langgraph_service
 from agent_server.usecase.execution.active_runs import active_runs
@@ -140,11 +141,33 @@ async def execute_run(job: RunJob) -> None:
         if not resumes_elsewhere:
             await streaming_service.cleanup_run(run_id)
             await _signal_run_done(run_id)
+            # Flush last: a slow or failing export must not delay stream
+            # cleanup or the run-done signal.
+            await _best_effort_flush(run_id)
 
 
 # ------------------------------------------------------------------
 # Internal helpers
 # ------------------------------------------------------------------
+
+
+async def _best_effort_flush(run_id: str) -> None:
+    """Flush OTEL spans after cleanup and completion signaling without disrupting either.
+
+    BatchSpanProcessor exports on its own schedule, so the root span of a
+    finished run can still be sitting in memory when nothing else will time
+    it. force_flush is blocking (up to its timeout), hence the to_thread
+    offload; the shutdown path may cancel this await, which must not override
+    the run's already-committed outcome.
+    """
+    try:
+        flushed = await asyncio.to_thread(flush_otel_spans)
+        if not flushed:
+            logger.warning("OTEL span flush incomplete (some spans may be lost)", run_id=run_id)
+    except asyncio.CancelledError:
+        logger.warning("OTEL span flush cancelled (best-effort)", run_id=run_id)
+    except Exception:
+        logger.warning("OTEL span flush failed (best-effort)", run_id=run_id, exc_info=True)
 
 
 async def _best_effort_signal(fn: Any, *args: Any) -> None:

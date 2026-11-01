@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agent_server.infra.observability.otel import OpenTelemetryProvider
+from agent_server.infra.observability.otel import OpenTelemetryProvider, flush_otel_spans
 from agent_server.infra.observability.targets import (
     BaseOtelTarget,
     GenericOtelTarget,
@@ -329,3 +329,72 @@ class TestOpenTelemetryProviderRuntime:
 
             meta = provider.get_metadata("run-1", "thread-1")
             assert meta == {}
+
+
+class TestForceFlush:
+    """force_flush drains the BatchSpanProcessor instead of dropping the tail."""
+
+    @staticmethod
+    def _provider(tracer_provider: MagicMock) -> OpenTelemetryProvider:
+        with patch("agent_server.infra.observability.otel.settings") as mock_settings:
+            mock_settings.observability.OTEL_TARGETS = ""
+            mock_settings.observability.OTEL_CONSOLE_EXPORT = True
+            provider = OpenTelemetryProvider()
+        provider._tracer_provider = tracer_provider
+        return provider
+
+    def test_delegates_with_the_given_timeout(self) -> None:
+        tp = MagicMock()
+        tp.force_flush.return_value = True
+
+        assert self._provider(tp).force_flush(timeout_millis=5000) is True
+
+        tp.force_flush.assert_called_once_with(timeout_millis=5000)
+
+    def test_default_timeout_is_ten_seconds(self) -> None:
+        tp = MagicMock()
+        tp.force_flush.return_value = True
+
+        self._provider(tp).force_flush()
+
+        tp.force_flush.assert_called_once_with(timeout_millis=10_000)
+
+    def test_no_tracer_provider_is_successfully_flushed(self) -> None:
+        """Nothing pending means nothing lost — a clean True, not a warning."""
+        with patch("agent_server.infra.observability.otel.settings") as mock_settings:
+            mock_settings.observability.OTEL_TARGETS = ""
+            mock_settings.observability.OTEL_CONSOLE_EXPORT = False
+            provider = OpenTelemetryProvider()
+
+        assert provider._tracer_provider is None
+        assert provider.force_flush() is True
+
+    @pytest.mark.parametrize("exc", [RuntimeError("export failed"), TimeoutError("deadline"), OSError("socket closed")])
+    def test_export_failures_return_false_without_raising(self, exc: Exception) -> None:
+        """The flush is best-effort: report the possible loss, never blow up."""
+        tp = MagicMock()
+        tp.force_flush.side_effect = exc
+        provider = self._provider(tp)
+
+        with patch("agent_server.infra.observability.otel.logger") as mock_logger:
+            assert provider.force_flush() is False
+
+        mock_logger.warning.assert_called_once()
+
+
+class TestFlushOtelSpans:
+    """Module-level wrapper so callers don't depend on the singleton."""
+
+    def test_delegates_to_the_singleton(self) -> None:
+        with patch("agent_server.infra.observability.otel.otel_provider") as mock_provider:
+            mock_provider.force_flush.return_value = True
+
+            assert flush_otel_spans() is True
+
+        mock_provider.force_flush.assert_called_once_with(timeout_millis=10_000)
+
+    def test_forwards_the_timeout(self) -> None:
+        with patch("agent_server.infra.observability.otel.otel_provider") as mock_provider:
+            flush_otel_spans(timeout_millis=2500)
+
+        mock_provider.force_flush.assert_called_once_with(timeout_millis=2500)

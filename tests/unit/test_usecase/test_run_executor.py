@@ -63,6 +63,7 @@ class TestExecuteRunSuccess:
                 "agent_server.usecase.execution.run_executor._signal_end_event", new_callable=AsyncMock
             ) as mock_signal_end,
             patch("agent_server.usecase.execution.run_executor._signal_run_done", new_callable=AsyncMock),
+            patch("agent_server.usecase.execution.run_executor.flush_otel_spans"),
             patch("agent_server.usecase.execution.run_executor.with_auth_ctx") as mock_auth,
         ):
             mock_auth_ctx = AsyncMock()
@@ -93,6 +94,7 @@ class TestExecuteRunCancelledError:
             patch("agent_server.usecase.execution.run_executor.finalize_run", mock_finalize),
             patch("agent_server.usecase.execution.run_executor.streaming_service") as mock_streaming,
             patch("agent_server.usecase.execution.run_executor._signal_run_done", new_callable=AsyncMock),
+            patch("agent_server.usecase.execution.run_executor.flush_otel_spans"),
             patch(
                 "agent_server.usecase.execution.run_executor._stream_graph",
                 new_callable=AsyncMock,
@@ -121,6 +123,7 @@ class TestExecuteRunCancelledError:
             patch("agent_server.usecase.execution.run_executor.finalize_run", mock_finalize),
             patch("agent_server.usecase.execution.run_executor.streaming_service") as mock_streaming,
             patch("agent_server.usecase.execution.run_executor._signal_run_done", new_callable=AsyncMock),
+            patch("agent_server.usecase.execution.run_executor.flush_otel_spans"),
             patch(
                 "agent_server.usecase.execution.run_executor._stream_graph",
                 new_callable=AsyncMock,
@@ -163,6 +166,7 @@ class TestExecuteRunException:
             patch("agent_server.usecase.execution.run_executor.finalize_run", mock_finalize),
             patch("agent_server.usecase.execution.run_executor.streaming_service") as mock_streaming,
             patch("agent_server.usecase.execution.run_executor._signal_run_done", new_callable=AsyncMock),
+            patch("agent_server.usecase.execution.run_executor.flush_otel_spans"),
             patch(
                 "agent_server.usecase.execution.run_executor._stream_graph",
                 new_callable=AsyncMock,
@@ -348,6 +352,7 @@ class TestLeaseLossCancellation:
             patch("agent_server.usecase.execution.run_executor.finalize_run", mock_finalize),
             patch("agent_server.usecase.execution.run_executor.streaming_service") as mock_streaming,
             patch("agent_server.usecase.execution.run_executor._signal_run_done", mock_signal_done),
+            patch("agent_server.usecase.execution.run_executor.flush_otel_spans"),
             patch(
                 "agent_server.usecase.execution.run_executor._stream_graph",
                 new_callable=AsyncMock,
@@ -386,6 +391,7 @@ class TestLeaseLossCancellation:
             patch("agent_server.usecase.execution.run_executor.finalize_run", mock_finalize),
             patch("agent_server.usecase.execution.run_executor.streaming_service") as mock_streaming,
             patch("agent_server.usecase.execution.run_executor._signal_run_done", mock_signal_done),
+            patch("agent_server.usecase.execution.run_executor.flush_otel_spans"),
             patch(
                 "agent_server.usecase.execution.run_executor._stream_graph",
                 new_callable=AsyncMock,
@@ -421,6 +427,7 @@ class TestShutdownDrainCancellation:
             patch("agent_server.usecase.execution.run_executor.finalize_run", mock_finalize),
             patch("agent_server.usecase.execution.run_executor.streaming_service") as mock_streaming,
             patch("agent_server.usecase.execution.run_executor._signal_run_done", mock_signal_done),
+            patch("agent_server.usecase.execution.run_executor.flush_otel_spans"),
             patch(
                 "agent_server.usecase.execution.run_executor._stream_graph",
                 new_callable=AsyncMock,
@@ -454,6 +461,7 @@ class TestShutdownDrainCancellation:
             patch("agent_server.usecase.execution.run_executor.finalize_run", new_callable=AsyncMock),
             patch("agent_server.usecase.execution.run_executor.streaming_service") as mock_streaming,
             patch("agent_server.usecase.execution.run_executor._signal_run_done", new_callable=AsyncMock),
+            patch("agent_server.usecase.execution.run_executor.flush_otel_spans"),
             patch(
                 "agent_server.usecase.execution.run_executor._stream_graph",
                 new_callable=AsyncMock,
@@ -479,6 +487,7 @@ class TestTerminalStateRaces:
             patch("agent_server.usecase.execution.run_executor.finalize_run", new_callable=AsyncMock) as mock_finalize,
             patch("agent_server.usecase.execution.run_executor.streaming_service") as mock_streaming,
             patch("agent_server.usecase.execution.run_executor._signal_run_done", new_callable=AsyncMock),
+            patch("agent_server.usecase.execution.run_executor.flush_otel_spans"),
         ):
             mock_streaming.cleanup_run = AsyncMock()
 
@@ -505,9 +514,204 @@ class TestTerminalStateRaces:
             ) as mock_signal_end,
             patch("agent_server.usecase.execution.run_executor.streaming_service") as mock_streaming,
             patch("agent_server.usecase.execution.run_executor._signal_run_done", new_callable=AsyncMock),
+            patch("agent_server.usecase.execution.run_executor.flush_otel_spans"),
         ):
             mock_streaming.cleanup_run = AsyncMock()
 
             await execute_run(_make_job())
 
         mock_signal_end.assert_not_awaited()
+
+
+class TestOtelFlushOnRunCompletion:
+    """OTEL spans flush after cleanup and run-done signaling, best-effort."""
+
+    @pytest.mark.asyncio
+    async def test_flush_runs_after_cleanup_and_done_signal(self) -> None:
+        """Flush is last: a slow or failing export must not delay the others."""
+        order: list[str] = []
+
+        with (
+            patch("agent_server.usecase.execution.run_executor.start_run", AsyncMock(return_value=True)),
+            patch("agent_server.usecase.execution.run_executor.finalize_run", AsyncMock(return_value=True)),
+            patch("agent_server.usecase.execution.run_executor.streaming_service") as mock_streaming,
+            patch(
+                "agent_server.usecase.execution.run_executor._stream_graph",
+                AsyncMock(return_value=MagicMock(has_interrupt=False, data={})),
+            ),
+            patch("agent_server.usecase.execution.run_executor._signal_end_event", AsyncMock()),
+            patch(
+                "agent_server.usecase.execution.run_executor._signal_run_done",
+                AsyncMock(side_effect=lambda *_: order.append("signal_run_done")),
+            ),
+            patch(
+                "agent_server.usecase.execution.run_executor.flush_otel_spans",
+                side_effect=lambda *a, **kw: order.append("flush"),
+            ),
+        ):
+            mock_streaming.cleanup_run = AsyncMock(side_effect=lambda *_: order.append("cleanup_run"))
+
+            await execute_run(_make_job())
+
+        assert order == ["cleanup_run", "signal_run_done", "flush"]
+
+    @pytest.mark.asyncio
+    async def test_flush_called_on_error(self) -> None:
+        with (
+            patch("agent_server.usecase.execution.run_executor.start_run", AsyncMock(return_value=True)),
+            patch("agent_server.usecase.execution.run_executor.finalize_run", AsyncMock(return_value=True)),
+            patch("agent_server.usecase.execution.run_executor.streaming_service") as mock_streaming,
+            patch("agent_server.usecase.execution.run_executor._signal_run_done", AsyncMock()),
+            patch(
+                "agent_server.usecase.execution.run_executor._stream_graph",
+                AsyncMock(side_effect=RuntimeError("graph exploded")),
+            ),
+            patch("agent_server.usecase.execution.run_executor.flush_otel_spans") as mock_flush,
+        ):
+            mock_streaming.signal_run_error = AsyncMock()
+            mock_streaming.cleanup_run = AsyncMock()
+
+            await execute_run(_make_job())
+
+        mock_flush.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_flush_called_on_user_cancellation(self) -> None:
+        with (
+            patch("agent_server.usecase.execution.run_executor.start_run", AsyncMock(return_value=True)),
+            patch("agent_server.usecase.execution.run_executor.finalize_run", AsyncMock(return_value=True)),
+            patch("agent_server.usecase.execution.run_executor.streaming_service") as mock_streaming,
+            patch("agent_server.usecase.execution.run_executor._signal_run_done", AsyncMock()),
+            patch(
+                "agent_server.usecase.execution.run_executor._stream_graph",
+                AsyncMock(side_effect=asyncio.CancelledError),
+            ),
+            patch("agent_server.usecase.execution.run_executor.flush_otel_spans") as mock_flush,
+        ):
+            mock_streaming.signal_run_cancelled = AsyncMock()
+            mock_streaming.cleanup_run = AsyncMock()
+
+            with pytest.raises(asyncio.CancelledError):
+                await execute_run(_make_job())
+
+        mock_flush.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_flush_skipped_on_lease_loss(self) -> None:
+        """Another worker owns the run and flushes when it finishes."""
+        with (
+            patch("agent_server.usecase.execution.run_executor.start_run", AsyncMock(return_value=True)),
+            patch("agent_server.usecase.execution.run_executor.finalize_run", AsyncMock()),
+            patch("agent_server.usecase.execution.run_executor.streaming_service") as mock_streaming,
+            patch("agent_server.usecase.execution.run_executor._signal_run_done", AsyncMock()),
+            patch(
+                "agent_server.usecase.execution.run_executor._stream_graph",
+                AsyncMock(side_effect=asyncio.CancelledError),
+            ),
+            patch("agent_server.usecase.execution.run_executor.flush_otel_spans") as mock_flush,
+        ):
+            mock_streaming.signal_run_cancelled = AsyncMock()
+            mock_streaming.cleanup_run = AsyncMock()
+
+            _lease_loss_cancellations.add("run-1")
+            try:
+                with pytest.raises(asyncio.CancelledError):
+                    await execute_run(_make_job())
+            finally:
+                _lease_loss_cancellations.discard("run-1")
+
+        mock_flush.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_flush_skipped_on_shutdown_drain(self) -> None:
+        """The requeued run flushes in the worker that resumes it."""
+        with (
+            patch("agent_server.usecase.execution.run_executor.start_run", AsyncMock(return_value=True)),
+            patch("agent_server.usecase.execution.run_executor.finalize_run", AsyncMock()),
+            patch("agent_server.usecase.execution.run_executor.streaming_service") as mock_streaming,
+            patch("agent_server.usecase.execution.run_executor._signal_run_done", AsyncMock()),
+            patch(
+                "agent_server.usecase.execution.run_executor._stream_graph",
+                AsyncMock(side_effect=asyncio.CancelledError),
+            ),
+            patch("agent_server.usecase.execution.run_executor.flush_otel_spans") as mock_flush,
+        ):
+            mock_streaming.signal_run_cancelled = AsyncMock()
+            mock_streaming.cleanup_run = AsyncMock()
+
+            _shutdown_cancellations.add("run-1")
+            try:
+                with pytest.raises(asyncio.CancelledError):
+                    await execute_run(_make_job())
+            finally:
+                _shutdown_cancellations.discard("run-1")
+
+        mock_flush.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_flush_failure_does_not_block_cleanup(self) -> None:
+        with (
+            patch("agent_server.usecase.execution.run_executor.start_run", AsyncMock(return_value=True)),
+            patch("agent_server.usecase.execution.run_executor.finalize_run", AsyncMock(return_value=True)),
+            patch("agent_server.usecase.execution.run_executor.streaming_service") as mock_streaming,
+            patch("agent_server.usecase.execution.run_executor._signal_end_event", AsyncMock()),
+            patch("agent_server.usecase.execution.run_executor._signal_run_done", AsyncMock()) as mock_signal_done,
+            patch(
+                "agent_server.usecase.execution.run_executor._stream_graph",
+                AsyncMock(side_effect=RuntimeError("graph exploded")),
+            ),
+            patch("agent_server.usecase.execution.run_executor.flush_otel_spans", side_effect=OSError("exporter down")),
+        ):
+            mock_streaming.signal_run_error = AsyncMock()
+            mock_streaming.cleanup_run = AsyncMock()
+
+            # Must not raise despite the flush failure
+            await execute_run(_make_job())
+
+        mock_streaming.cleanup_run.assert_awaited_once_with("run-1")
+        mock_signal_done.assert_awaited_once_with("run-1")
+
+    @pytest.mark.asyncio
+    async def test_flush_cancellation_does_not_block_cleanup(self) -> None:
+        with (
+            patch("agent_server.usecase.execution.run_executor.start_run", AsyncMock(return_value=True)),
+            patch("agent_server.usecase.execution.run_executor.finalize_run", AsyncMock(return_value=True)),
+            patch("agent_server.usecase.execution.run_executor.streaming_service") as mock_streaming,
+            patch("agent_server.usecase.execution.run_executor._signal_end_event", AsyncMock()),
+            patch("agent_server.usecase.execution.run_executor._signal_run_done", AsyncMock()) as mock_signal_done,
+            patch(
+                "agent_server.usecase.execution.run_executor._stream_graph",
+                AsyncMock(side_effect=RuntimeError("graph exploded")),
+            ),
+            patch("agent_server.usecase.execution.run_executor.flush_otel_spans", side_effect=asyncio.CancelledError),
+        ):
+            mock_streaming.signal_run_error = AsyncMock()
+            mock_streaming.cleanup_run = AsyncMock()
+
+            await execute_run(_make_job())
+
+        mock_streaming.cleanup_run.assert_awaited_once_with("run-1")
+        mock_signal_done.assert_awaited_once_with("run-1")
+
+    @pytest.mark.asyncio
+    async def test_incomplete_flush_warns(self) -> None:
+        """force_flush returning False means spans may be lost — that is warn-worthy."""
+        with (
+            patch("agent_server.usecase.execution.run_executor.start_run", AsyncMock(return_value=True)),
+            patch("agent_server.usecase.execution.run_executor.finalize_run", AsyncMock(return_value=True)),
+            patch("agent_server.usecase.execution.run_executor.streaming_service") as mock_streaming,
+            patch("agent_server.usecase.execution.run_executor._signal_end_event", AsyncMock()),
+            patch("agent_server.usecase.execution.run_executor._signal_run_done", AsyncMock()),
+            patch(
+                "agent_server.usecase.execution.run_executor._stream_graph",
+                AsyncMock(return_value=MagicMock(has_interrupt=False, data={})),
+            ),
+            patch("agent_server.usecase.execution.run_executor.flush_otel_spans", return_value=False),
+            patch("agent_server.usecase.execution.run_executor.logger") as mock_logger,
+        ):
+            mock_streaming.cleanup_run = AsyncMock()
+
+            await execute_run(_make_job())
+
+        mock_logger.warning.assert_called_once()
+        assert "incomplete" in mock_logger.warning.call_args.args[0]
