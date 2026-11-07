@@ -2,13 +2,16 @@
 
 from unittest.mock import patch
 
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-
 from agent_server.infra.observability.targets.otlp import GenericOtelTarget
 
 
 class TestGenericOtelTarget:
-    """Tests for GenericOtelTarget configuration and header parsing."""
+    """Tests for GenericOtelTarget configuration and header parsing.
+
+    Exporter assertions target the constructor arguments we pass, not
+    attributes of OTLPSpanExporter: OpenTelemetry moved headers off the
+    exporter in 1.45, and its internals are not a contract.
+    """
 
     def test_target_name(self):
         """Test that the target has the correct friendly name."""
@@ -27,31 +30,36 @@ class TestGenericOtelTarget:
         """Test exporter creation with only an endpoint (no headers)."""
         endpoint = "http://jaeger:4318/v1/traces"
 
-        with patch("agent_server.infra.observability.targets.otlp.settings") as mock_settings:
+        with (
+            patch("agent_server.infra.observability.targets.otlp.settings") as mock_settings,
+            patch("agent_server.infra.observability.targets.otlp.OTLPSpanExporter") as mock_exporter_cls,
+        ):
             mock_settings.observability.OTEL_EXPORTER_OTLP_ENDPOINT = endpoint
             mock_settings.observability.OTEL_EXPORTER_OTLP_HEADERS = None
 
             target = GenericOtelTarget()
             exporter = target.get_exporter()
 
-            assert isinstance(exporter, OTLPSpanExporter)
-            assert exporter._endpoint == endpoint
-            assert exporter._headers == {}
+            assert exporter is mock_exporter_cls.return_value
+            mock_exporter_cls.assert_called_once_with(endpoint=endpoint, headers={})
 
     def test_header_parsing_valid(self):
         """Test parsing of a valid header string."""
         endpoint = "http://localhost:4318"
         headers_str = "Authorization=Bearer 123, X-Custom=Value"
 
-        with patch("agent_server.infra.observability.targets.otlp.settings") as mock_settings:
+        with (
+            patch("agent_server.infra.observability.targets.otlp.settings") as mock_settings,
+            patch("agent_server.infra.observability.targets.otlp.OTLPSpanExporter") as mock_exporter_cls,
+        ):
             mock_settings.observability.OTEL_EXPORTER_OTLP_ENDPOINT = endpoint
             mock_settings.observability.OTEL_EXPORTER_OTLP_HEADERS = headers_str
 
             target = GenericOtelTarget()
-            exporter = target.get_exporter()
+            target.get_exporter()
 
             expected_headers = {"Authorization": "Bearer 123", "X-Custom": "Value"}
-            assert exporter._headers == expected_headers
+            assert mock_exporter_cls.call_args.kwargs["headers"] == expected_headers
 
     def test_header_parsing_malformed_items(self):
         """Test that malformed header items are skipped gracefully."""
@@ -59,26 +67,32 @@ class TestGenericOtelTarget:
         # 'InvalidItem' lacks '=', so it should be skipped
         headers_str = "Key1=Value1, InvalidItem, Key2=Value2"
 
-        with patch("agent_server.infra.observability.targets.otlp.settings") as mock_settings:
+        with (
+            patch("agent_server.infra.observability.targets.otlp.settings") as mock_settings,
+            patch("agent_server.infra.observability.targets.otlp.OTLPSpanExporter") as mock_exporter_cls,
+        ):
             mock_settings.observability.OTEL_EXPORTER_OTLP_ENDPOINT = endpoint
             mock_settings.observability.OTEL_EXPORTER_OTLP_HEADERS = headers_str
 
             target = GenericOtelTarget()
-            exporter = target.get_exporter()
+            target.get_exporter()
 
             # Should contain valid pairs, invalid one ignored
             expected_headers = {"Key1": "Value1", "Key2": "Value2"}
-            assert exporter._headers == expected_headers
+            assert mock_exporter_cls.call_args.kwargs["headers"] == expected_headers
 
     def test_header_parsing_empty_string(self):
         """Test that empty string results in empty headers."""
         endpoint = "http://localhost"
 
-        with patch("agent_server.infra.observability.targets.otlp.settings") as mock_settings:
+        with (
+            patch("agent_server.infra.observability.targets.otlp.settings") as mock_settings,
+            patch("agent_server.infra.observability.targets.otlp.OTLPSpanExporter") as mock_exporter_cls,
+        ):
             mock_settings.observability.OTEL_EXPORTER_OTLP_ENDPOINT = endpoint
             mock_settings.observability.OTEL_EXPORTER_OTLP_HEADERS = ""
 
             target = GenericOtelTarget()
-            exporter = target.get_exporter()
+            target.get_exporter()
 
-            assert exporter._headers == {}
+            mock_exporter_cls.assert_called_once_with(endpoint=endpoint, headers={})

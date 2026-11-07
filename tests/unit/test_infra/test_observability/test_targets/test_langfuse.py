@@ -3,13 +3,16 @@
 import base64
 from unittest.mock import patch
 
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-
 from agent_server.infra.observability.targets.langfuse import LangfuseTarget
 
 
 class TestLangfuseTarget:
-    """Tests for LangfuseTarget configuration and exporter creation."""
+    """Tests for LangfuseTarget configuration and exporter creation.
+
+    Exporter assertions target the constructor arguments we pass, not
+    attributes of OTLPSpanExporter: OpenTelemetry moved headers off the
+    exporter in 1.45, and its internals are not a contract.
+    """
 
     def test_target_name(self):
         """Test that the target has the correct friendly name."""
@@ -38,7 +41,10 @@ class TestLangfuseTarget:
         sk = "sk-test-secret"
         host = "https://cloud.langfuse.com"
 
-        with patch("agent_server.infra.observability.targets.langfuse.settings") as mock_settings:
+        with (
+            patch("agent_server.infra.observability.targets.langfuse.settings") as mock_settings,
+            patch("agent_server.infra.observability.targets.langfuse.OTLPSpanExporter") as mock_exporter_cls,
+        ):
             mock_settings.observability.LANGFUSE_PUBLIC_KEY = pk
             mock_settings.observability.LANGFUSE_SECRET_KEY = sk
             mock_settings.observability.LANGFUSE_BASE_URL = host
@@ -46,30 +52,34 @@ class TestLangfuseTarget:
             target = LangfuseTarget()
             exporter = target.get_exporter()
 
-            assert isinstance(exporter, OTLPSpanExporter)
+            assert exporter is mock_exporter_cls.return_value
+            call_kwargs = mock_exporter_cls.call_args.kwargs
 
             # Verify Endpoint construction
-            # Accessing private attribute _endpoint for verification is common in unit tests for OTLP exporters
-            assert exporter._endpoint == "https://cloud.langfuse.com/api/public/otel/v1/traces"
+            assert call_kwargs["endpoint"] == "https://cloud.langfuse.com/api/public/otel/v1/traces"
 
             # Verify Authorization Header (Basic Auth Base64)
             expected_auth = base64.b64encode(f"{pk}:{sk}".encode()).decode()
-            assert exporter._headers["Authorization"] == f"Basic {expected_auth}"
+            assert call_kwargs["headers"]["Authorization"] == f"Basic {expected_auth}"
 
     def test_endpoint_slash_handling(self):
         """Test that trailing slashes in host are handled correctly."""
         host_with_slash = "https://custom.langfuse.host/"
 
-        with patch("agent_server.infra.observability.targets.langfuse.settings") as mock_settings:
+        with (
+            patch("agent_server.infra.observability.targets.langfuse.settings") as mock_settings,
+            patch("agent_server.infra.observability.targets.langfuse.OTLPSpanExporter") as mock_exporter_cls,
+        ):
             mock_settings.observability.LANGFUSE_PUBLIC_KEY = "pk"
             mock_settings.observability.LANGFUSE_SECRET_KEY = "sk"
             mock_settings.observability.LANGFUSE_BASE_URL = host_with_slash
 
             target = LangfuseTarget()
-            exporter = target.get_exporter()
+            target.get_exporter()
 
             # Should not have double slash //api...
-            assert exporter._endpoint == "https://custom.langfuse.host/api/public/otel/v1/traces"
+            endpoint = mock_exporter_cls.call_args.kwargs["endpoint"]
+            assert endpoint == "https://custom.langfuse.host/api/public/otel/v1/traces"
 
     def test_ingestion_version_header_set(self):
         """Test that x-langfuse-ingestion-version: 4 header is passed to OTLPSpanExporter."""
