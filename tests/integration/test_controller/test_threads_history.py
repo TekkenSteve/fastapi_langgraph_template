@@ -153,6 +153,39 @@ def test_post_history_basic(client: TestClient, mock_langgraph):
     assert s0.get("next") == ["step_b"]
 
 
+def test_history_metadata_reaches_langgraph_as_filter(client: TestClient):
+    """A metadata filter (the SDK's get_history(metadata=...)) reaches LangGraph as `filter`.
+
+    Pregel.aget_state_history takes no `metadata` keyword; the old `metadata=`
+    spelling raised TypeError on every filtered read and surfaced as a 500.
+    The fake below repeats LangGraph's exact keyword-only signature, with no
+    **kwargs, so a wrong keyword fails here as it does in a real graph.
+    """
+    filters: list[dict[str, Any] | None] = []
+
+    class SignatureAgent(FakeAgent):
+        async def aget_state_history(  # type: ignore[override]
+            self,
+            config: dict[str, Any],
+            *,
+            filter: dict[str, Any] | None = None,
+            before: dict[str, Any] | None = None,
+            limit: int | None = None,
+        ) -> AsyncIterator[Any]:
+            filters.append(filter)
+            return
+            yield  # presence of `yield` makes this an async generator
+
+    with patch_langgraph_service(agent=SignatureAgent(snapshots=[])):
+        thread_id = _ensure_thread(client)
+        post = client.post(f"/threads/{thread_id}/history", json={"limit": 1, "metadata": {"step": 2}})
+        get = client.get(f"/threads/{thread_id}/history", params={"metadata": json.dumps({"step": 3})})
+
+    assert post.status_code == 200, post.text
+    assert get.status_code == 200, get.text
+    assert filters == [{"step": 2}, {"step": 3}]
+
+
 def test_post_history_with_checkpoint_ns(client: TestClient, mock_langgraph):
     thread_id = _ensure_thread(client)
 
