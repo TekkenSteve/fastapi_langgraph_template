@@ -1,0 +1,63 @@
+name: Latest dependencies
+
+# pyproject.toml only sets floors, so users resolve each new release the day it
+# ships, while CI tests what uv.lock pins. This job resolves everything to the
+# newest versions every night and runs the suites, so a breaking release shows
+# up as an issue here before users hit it. Failures only open issues on the
+# scheduled run — manual dispatches are for looking, not reporting.
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+# A slow night must not pile runs; the newest report wins.
+concurrency:
+  group: latest-deps
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Resolve to the newest versions
+        run: uv lock --upgrade
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Show resolved core packages
+        run: uv pip list | grep -iE "^(langgraph|langchain-core|fastapi|pydantic)"
+
+      - name: Test
+        run: uv run pytest tests/unit tests/integration tests/graphs tests/shop tests/ml tests/hub
+
+      # One open issue at a time; later failures comment on it instead of
+      # opening duplicates. Uses the job token — no PAT in secrets.
+      - name: Report failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Tests fail against the newest dependency releases"
+          body="The nightly run against the newest releases failed: $RUN_URL"
+          existing=$(gh issue list --state open --search "in:title \"$title\"" --json number -q '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
