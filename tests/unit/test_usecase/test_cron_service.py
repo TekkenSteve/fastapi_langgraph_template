@@ -872,6 +872,40 @@ class TestUpdateCronExtended:
         assert resp.end_time == end
 
     @pytest.mark.asyncio
+    async def test_explicit_null_end_time_clears_it(
+        self,
+        cron_service: CronService,
+        mock_session: AsyncMock,
+    ) -> None:
+        """The SDK sends end_time=null to clear the end time; it must be written."""
+        mock_session.scalar.side_effect = [
+            _make_cron_orm(end_time=datetime.now(UTC) + timedelta(days=1)),
+            _make_cron_orm(),
+        ]
+
+        await cron_service.update_cron("cron-001", CronUpdate(end_time=None), "test-user")
+
+        stmt = mock_session.execute.await_args.args[0]
+        assert stmt.compile().params["end_time"] is None
+
+    @pytest.mark.asyncio
+    async def test_omitted_end_time_keeps_it(
+        self,
+        cron_service: CronService,
+        mock_session: AsyncMock,
+    ) -> None:
+        """Leaving end_time out of the body keeps the stored value."""
+        mock_session.scalar.side_effect = [
+            _make_cron_orm(end_time=datetime.now(UTC) + timedelta(days=1)),
+            _make_cron_orm(),
+        ]
+
+        await cron_service.update_cron("cron-001", CronUpdate(schedule="0 * * * *"), "test-user")
+
+        stmt = mock_session.execute.await_args.args[0]
+        assert "end_time" not in stmt.compile().params
+
+    @pytest.mark.asyncio
     async def test_updates_on_run_completed(
         self,
         cron_service: CronService,

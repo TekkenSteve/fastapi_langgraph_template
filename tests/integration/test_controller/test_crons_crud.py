@@ -176,6 +176,20 @@ class TestUpdateCron:
         assert data["cron_id"] == "cron-001"
         assert data["schedule"] == "*/10 * * * *"
 
+    def test_explicit_end_time_null_reaches_service_and_auth(self, client, mock_cron_service: AsyncMock) -> None:
+        """An explicit end_time: null clears the end time — the service and the auth handler must both see it."""
+        mock_cron_service.update_cron.return_value = _cron_response()
+
+        with patch("agent_server.controller.http.routers.crons.handle_event", new_callable=AsyncMock) as mock_handle:
+            resp = client.patch("/runs/crons/cron-001", json={"end_time": None})
+
+        assert resp.status_code == 200
+        request = mock_cron_service.update_cron.await_args.args[1]
+        assert "end_time" in request.model_fields_set
+        assert request.end_time is None
+        handler_payload = mock_handle.await_args.args[1]
+        assert handler_payload["end_time"] is None
+
     def test_returns_404_when_not_found(self, client, mock_cron_service: AsyncMock) -> None:
         mock_cron_service.update_cron.side_effect = HTTPException(404, "Cron 'missing' not found")
 
