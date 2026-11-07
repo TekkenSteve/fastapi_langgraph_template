@@ -114,6 +114,26 @@ class TestFormatSSEMessage:
         data_line = next(line for line in result.split("\n") if line.startswith("data: "))
         assert "\\uD83D" in data_line
 
+    def test_format_message_keeps_escaped_backslash_before_unicode_escape(self):
+        """Regression: content holding an escaped backslash before uXXXX is passed through.
+
+        Only a single backslash before ``uXXXX`` is an LLM-streamed escape; a doubled
+        backslash is an escaped backslash in the content (e.g. Python source the model
+        echoed), and the client must get it back unchanged — not print("\\u00e9")
+        collapsing to print("\\é").
+        """
+        data = {"content": 'print("\\\\u00e9")'}
+        result = format_sse_message("messages", data)
+        data_line = next(line for line in result.split("\n") if line.startswith("data: "))
+        assert json.loads(data_line.replace("data: ", "")) == data
+
+    def test_format_message_keeps_escaped_backslash_before_surrogate_pair(self):
+        """A doubled backslash in front of a surrogate pair is left as written, not combined."""
+        data = {"content": "\\\\uD83D\\uDE00"}
+        result = format_sse_message("messages", data)
+        data_line = next(line for line in result.split("\n") if line.startswith("data: "))
+        assert json.loads(data_line.replace("data: ", "")) == data
+
     def test_format_message_with_custom_serializer(self):
         """Test SSE message with custom serializer"""
 
