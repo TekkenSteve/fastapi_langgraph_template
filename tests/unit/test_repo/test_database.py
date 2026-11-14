@@ -1,4 +1,6 @@
+import asyncio
 import os
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,73 +11,76 @@ from agent_server.config.settings import settings
 from agent_server.repo.database import DatabaseManager
 
 
-class TestDatabaseManager:
-    @pytest.fixture
-    def db_manager(self):
-        """Creates a fresh DatabaseManager instance for each test."""
-        return DatabaseManager()
+@pytest.fixture
+def db_manager():
+    """Creates a fresh DatabaseManager instance for each test."""
+    return DatabaseManager()
 
-    @pytest.fixture
-    def mock_env(self):
-        """
-        Sets up the environment variables required for the database configuration.
-        Using patch.dict ensures these are reset after the test.
-        """
-        env_vars = {
-            "DATABASE_URL": settings.db.database_url,
-            "SQLALCHEMY_POOL_SIZE": str(settings.pool.SQLALCHEMY_POOL_SIZE),
-            "LANGGRAPH_MAX_POOL_SIZE": str(settings.pool.LANGGRAPH_MAX_POOL_SIZE),
-            "LANGGRAPH_MIN_POOL_SIZE": str(settings.pool.LANGGRAPH_MIN_POOL_SIZE),
+
+@pytest.fixture
+def mock_env():
+    """
+    Sets up the environment variables required for the database configuration.
+    Using patch.dict ensures these are reset after the test.
+    """
+    env_vars = {
+        "DATABASE_URL": settings.db.database_url,
+        "SQLALCHEMY_POOL_SIZE": str(settings.pool.SQLALCHEMY_POOL_SIZE),
+        "LANGGRAPH_MAX_POOL_SIZE": str(settings.pool.LANGGRAPH_MAX_POOL_SIZE),
+        "LANGGRAPH_MIN_POOL_SIZE": str(settings.pool.LANGGRAPH_MIN_POOL_SIZE),
+    }
+    with patch.dict(os.environ, env_vars):
+        yield
+
+
+@pytest.fixture
+def mock_db_deps(mock_env):
+    """
+    Mocks all external database dependencies (SQLAlchemy, LangGraph pools, etc.).
+    Returns a dictionary of mocks to be used for assertions in tests.
+    """
+    with (
+        patch("agent_server.repo.database.create_async_engine") as mock_create_engine,
+        patch("agent_server.repo.database.AsyncConnectionPool") as mock_pool_cls,
+        patch("agent_server.repo.database.AsyncPostgresSaver") as mock_saver_cls,
+        patch("agent_server.repo.database.AsyncPostgresStore") as mock_store_cls,
+        patch("agent_server.repo.database.load_store_config") as mock_load_store_config,
+    ):
+        # 1. Setup SQLAlchemy Engine Mock
+        mock_engine = AsyncMock()
+        mock_create_engine.return_value = mock_engine
+
+        # 2. Setup LangGraph Connection Pool Mock
+        mock_pool_instance = AsyncMock()
+        mock_pool_cls.return_value = mock_pool_instance
+        # Mock the static/class method check_connection
+        mock_pool_cls.check_connection = MagicMock()
+
+        # 3. Setup Saver and Store Mocks
+        mock_saver_instance = AsyncMock()
+        mock_saver_cls.return_value = mock_saver_instance
+
+        mock_store_instance = AsyncMock()
+        mock_store_cls.return_value = mock_store_instance
+
+        # 4. Default: no store config
+        mock_load_store_config.return_value = None
+
+        # Yield a dictionary so tests can access specific mocks for assertions
+        yield {
+            "create_engine": mock_create_engine,
+            "engine_instance": mock_engine,
+            "pool_cls": mock_pool_cls,
+            "pool_instance": mock_pool_instance,
+            "saver_cls": mock_saver_cls,
+            "saver_instance": mock_saver_instance,
+            "store_cls": mock_store_cls,
+            "store_instance": mock_store_instance,
+            "load_store_config": mock_load_store_config,
         }
-        with patch.dict(os.environ, env_vars):
-            yield
 
-    @pytest.fixture
-    def mock_db_deps(self, mock_env):
-        """
-        Mocks all external database dependencies (SQLAlchemy, LangGraph pools, etc.).
-        Returns a dictionary of mocks to be used for assertions in tests.
-        """
-        with (
-            patch("agent_server.repo.database.create_async_engine") as mock_create_engine,
-            patch("agent_server.repo.database.AsyncConnectionPool") as mock_pool_cls,
-            patch("agent_server.repo.database.AsyncPostgresSaver") as mock_saver_cls,
-            patch("agent_server.repo.database.AsyncPostgresStore") as mock_store_cls,
-            patch("agent_server.repo.database.load_store_config") as mock_load_store_config,
-        ):
-            # 1. Setup SQLAlchemy Engine Mock
-            mock_engine = AsyncMock()
-            mock_create_engine.return_value = mock_engine
 
-            # 2. Setup LangGraph Connection Pool Mock
-            mock_pool_instance = AsyncMock()
-            mock_pool_cls.return_value = mock_pool_instance
-            # Mock the static/class method check_connection
-            mock_pool_cls.check_connection = MagicMock()
-
-            # 3. Setup Saver and Store Mocks
-            mock_saver_instance = AsyncMock()
-            mock_saver_cls.return_value = mock_saver_instance
-
-            mock_store_instance = AsyncMock()
-            mock_store_cls.return_value = mock_store_instance
-
-            # 4. Default: no store config
-            mock_load_store_config.return_value = None
-
-            # Yield a dictionary so tests can access specific mocks for assertions
-            yield {
-                "create_engine": mock_create_engine,
-                "engine_instance": mock_engine,
-                "pool_cls": mock_pool_cls,
-                "pool_instance": mock_pool_instance,
-                "saver_cls": mock_saver_cls,
-                "saver_instance": mock_saver_instance,
-                "store_cls": mock_store_cls,
-                "store_instance": mock_store_instance,
-                "load_store_config": mock_load_store_config,
-            }
-
+class TestDatabaseManager:
     async def test_initialize_success(self, db_manager, mock_db_deps):
         """Test successful initialization checking against ACTUAL settings."""
 
@@ -227,3 +232,109 @@ class TestDatabaseManager:
         # Store should be initialized with index=None
         mock_db_deps["store_cls"].assert_called_with(conn=mock_db_deps["pool_instance"], index=None)
         mock_db_deps["store_instance"].setup.assert_awaited_once()
+
+
+class TestInitializeReleasesResourcesOnFailure:
+    """initialize() must not leave pools open when a later step fails.
+
+    The lifespan only registers close() after initialize() succeeds, so a
+    failure inside initialize() is the one path nothing else cleans up.
+    """
+
+    @staticmethod
+    def _assert_released(manager: DatabaseManager, deps: dict[str, Any]) -> None:
+        deps["pool_instance"].close.assert_awaited_once()
+        deps["engine_instance"].dispose.assert_awaited_once()
+        assert manager.engine is None
+        assert manager.lg_pool is None
+        assert manager._checkpointer is None
+        assert manager._store is None
+
+    async def test_initialize_releases_resources_when_checkpointer_setup_fails(
+        self, db_manager: DatabaseManager, mock_db_deps: dict[str, Any]
+    ) -> None:
+        mock_db_deps["saver_instance"].setup.side_effect = RuntimeError("setup failed")
+
+        with pytest.raises(RuntimeError, match="setup failed"):
+            await db_manager.initialize()
+
+        self._assert_released(db_manager, mock_db_deps)
+
+    async def test_initialize_releases_resources_when_store_setup_fails(
+        self, db_manager: DatabaseManager, mock_db_deps: dict[str, Any]
+    ) -> None:
+        mock_db_deps["store_instance"].setup.side_effect = RuntimeError("store setup failed")
+
+        with pytest.raises(RuntimeError, match="store setup failed"):
+            await db_manager.initialize()
+
+        self._assert_released(db_manager, mock_db_deps)
+
+    async def test_initialize_releases_resources_when_pool_open_fails(
+        self, db_manager: DatabaseManager, mock_db_deps: dict[str, Any]
+    ) -> None:
+        mock_db_deps["pool_instance"].open.side_effect = OSError("connection refused")
+
+        with pytest.raises(OSError, match="connection refused"):
+            await db_manager.initialize()
+
+        self._assert_released(db_manager, mock_db_deps)
+
+    async def test_initialize_releases_resources_and_propagates_cancellation(
+        self, db_manager: DatabaseManager, mock_db_deps: dict[str, Any]
+    ) -> None:
+        mock_db_deps["saver_instance"].setup.side_effect = asyncio.CancelledError()
+
+        with pytest.raises(asyncio.CancelledError):
+            await db_manager.initialize()
+
+        self._assert_released(db_manager, mock_db_deps)
+
+    async def test_initialize_raises_original_error_when_cleanup_also_fails(
+        self, db_manager: DatabaseManager, mock_db_deps: dict[str, Any]
+    ) -> None:
+        mock_db_deps["saver_instance"].setup.side_effect = RuntimeError("setup failed")
+        mock_db_deps["engine_instance"].dispose.side_effect = RuntimeError("dispose failed")
+        mock_db_deps["pool_instance"].close.side_effect = RuntimeError("close failed")
+
+        with pytest.raises(RuntimeError, match="setup failed"):
+            await db_manager.initialize()
+
+        mock_db_deps["engine_instance"].dispose.assert_awaited_once()
+        mock_db_deps["pool_instance"].close.assert_awaited_once()
+        assert db_manager.engine is None
+        assert db_manager.lg_pool is None
+
+    async def test_initialize_starts_fresh_after_a_failed_initialize(
+        self, db_manager: DatabaseManager, mock_db_deps: dict[str, Any]
+    ) -> None:
+        mock_db_deps["saver_instance"].setup.side_effect = [RuntimeError("setup failed"), None]
+
+        with pytest.raises(RuntimeError, match="setup failed"):
+            await db_manager.initialize()
+        await db_manager.initialize()
+
+        assert mock_db_deps["create_engine"].call_count == 2
+        assert mock_db_deps["pool_instance"].open.await_count == 2
+        assert db_manager.engine is mock_db_deps["engine_instance"]
+        assert db_manager.get_checkpointer() is mock_db_deps["saver_instance"]
+
+    async def test_close_closes_pool_and_clears_state_when_engine_dispose_fails(
+        self, db_manager: DatabaseManager
+    ) -> None:
+        engine = AsyncMock()
+        engine.dispose.side_effect = RuntimeError("dispose failed")
+        pool = AsyncMock()
+        db_manager.engine = engine
+        db_manager.lg_pool = pool
+        db_manager._checkpointer = AsyncMock()
+        db_manager._store = AsyncMock()
+
+        with pytest.raises(RuntimeError, match="dispose failed"):
+            await db_manager.close()
+
+        pool.close.assert_awaited_once()
+        assert db_manager.engine is None
+        assert db_manager.lg_pool is None
+        assert db_manager._checkpointer is None
+        assert db_manager._store is None
