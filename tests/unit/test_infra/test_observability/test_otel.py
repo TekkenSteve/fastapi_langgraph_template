@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agent_server.infra.observability.otel import OpenTelemetryProvider, flush_otel_spans
+from agent_server.infra.observability.span_enrichment import RunIdAwareIdGenerator
 from agent_server.infra.observability.targets import (
     BaseOtelTarget,
     GenericOtelTarget,
@@ -179,7 +180,10 @@ class TestOpenTelemetryProviderSetup:
                 "deployment.environment": "test",
             }
         )
-        mock_deps["tp"].assert_called_with(resource=mock_deps["resource"].create.return_value)
+        kwargs = mock_deps["tp"].call_args.kwargs
+        assert kwargs["resource"] is mock_deps["resource"].create.return_value
+        # Runs seed deterministic trace ids from run_id via this generator.
+        assert isinstance(kwargs["id_generator"], RunIdAwareIdGenerator)
 
     def test_setup_attaches_configured_targets(self, mock_deps):
         """Test that exporters from targets are attached to the tracer."""

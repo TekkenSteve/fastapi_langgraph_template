@@ -329,6 +329,9 @@ class ObservabilitySettings(EnvBase):
     OTEL_SERVICE_NAME: str = "agent-server"
     OTEL_TARGETS: str = ""  # Comma-separated: "LANGFUSE,PHOENIX"
     OTEL_CONSOLE_EXPORT: bool = False  # For local debugging
+    # Seed each run's OTEL trace_id from UUID(run_id) so backends (Langfuse)
+    # can link feedback by run_id without a lookup. Off under ratio samplers.
+    OTEL_TRACE_ID_FROM_RUN_ID: bool = True
 
     # --- Generic OTLP Target (Default/Custom) ---
     OTEL_EXPORTER_OTLP_ENDPOINT: str | None = None

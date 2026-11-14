@@ -22,7 +22,11 @@ from redis import RedisError
 from sqlalchemy import select, update
 
 from agent_server.config.settings import settings
-from agent_server.infra.observability.span_enrichment import merge_run_metadata, set_trace_context
+from agent_server.infra.observability.span_enrichment import (
+    merge_run_metadata,
+    prepare_run_otel_trace,
+    set_trace_context,
+)
 from agent_server.infra.redis import redis_manager
 from agent_server.repo.orm import Run as RunORM
 from agent_server.repo.orm import _get_session_maker
@@ -598,6 +602,7 @@ def _restore_trace_context(run_id: str, job: RunJob, trace: dict[str, str]) -> N
     see :func:`merge_run_metadata`.
     """
     structlog.contextvars.clear_contextvars()
+    prepare_run_otel_trace(run_id)
 
     original_request_id = trace.get("correlation_id", "")
     if original_request_id:

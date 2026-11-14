@@ -14,7 +14,8 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExport
 
 from agent_server.config.settings import settings
 from agent_server.infra.observability.base import ObservabilityProvider
-from agent_server.infra.observability.span_enrichment import SpanEnrichmentProcessor
+from agent_server.infra.observability.sampling import is_trace_id_from_run_id_enabled
+from agent_server.infra.observability.span_enrichment import RunIdAwareIdGenerator, SpanEnrichmentProcessor
 from agent_server.infra.observability.targets import (
     BaseOtelTarget,
     GenericOtelTarget,
@@ -97,7 +98,14 @@ class OpenTelemetryProvider(ObservabilityProvider):
             }
         )
 
-        self._tracer_provider = TracerProvider(resource=resource)
+        # Warn once here when seeding is disabled (ratio sampler / setting):
+        # the generator silently falls back to random trace ids.
+        is_trace_id_from_run_id_enabled()
+
+        self._tracer_provider = TracerProvider(
+            resource=resource,
+            id_generator=RunIdAwareIdGenerator(),
+        )
         self._tracer_provider.add_span_processor(SpanEnrichmentProcessor())
         processors_count = 0
 
