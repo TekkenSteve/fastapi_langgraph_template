@@ -182,7 +182,7 @@ class MontySandboxBackend(SandboxBackendProtocol):
         from pydantic_monty import CollectString, Monty, MountDir
 
         limits: ResourceLimits = {
-            "max_duration_secs": float(timeout) if timeout is not None else self._max_duration_secs,
+            "max_feed_duration_secs": float(timeout) if timeout is not None else self._max_duration_secs,
             "max_memory": self._max_memory,
         }
         stdout = CollectString()

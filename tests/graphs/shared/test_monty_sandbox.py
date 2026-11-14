@@ -68,6 +68,12 @@ def test_execute_inline_python(backend: MontySandboxBackend) -> None:
     assert result.output.strip() == "hi"
 
 
+def test_execute_timeout_override_uses_feed_limit(backend: MontySandboxBackend) -> None:
+    result = backend.execute("python -c \"print('hi')\"", timeout=1)
+    assert result.exit_code == 0
+    assert result.output.strip() == "hi"
+
+
 def test_execute_script_from_virtual_fs(backend: MontySandboxBackend) -> None:
     backend.write("/skills/coffee/ratio.py", "print(16 * 10)")
     result = backend.execute("python /skills/coffee/ratio.py")
