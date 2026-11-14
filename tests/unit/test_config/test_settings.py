@@ -705,7 +705,7 @@ class TestNoStrayEnvironmentReads:
     _SOURCE_ROOTS = ("agent_server", "graphs", "hub")
     # The MCP registry prefix is dynamic by design: MCP_SERVER__<NAME> carries a
     # per-server connection object, so it cannot be a fixed settings field.
-    _DYNAMIC_PREFIX = "MCP_SERVER__"
+    _DYNAMIC_PREFIXES = ("MCP_SERVER__", "LG_WEBHOOK_")
 
     @staticmethod
     def _source_files() -> list[Path]:
@@ -725,7 +725,8 @@ class TestNoStrayEnvironmentReads:
         scanners = [
             path.name
             for path in self._source_files()
-            if self._references_environ(path) and self._DYNAMIC_PREFIX not in path.read_text()
+            if self._references_environ(path)
+            and not any(prefix in path.read_text() for prefix in self._DYNAMIC_PREFIXES)
         ]
         assert scanners == [], f"{scanners} read os.environ without an explicit prefix"
 

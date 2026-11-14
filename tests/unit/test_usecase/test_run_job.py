@@ -91,6 +91,8 @@ class TestRunJob:
         class FakeORM:
             run_id = "run-1"
             thread_id = "thread-1"
+            assistant_id = None
+            created_at = None
             execution_params = sample_job.to_execution_params()
 
         restored = RunJob.from_run_orm(FakeORM())
@@ -117,6 +119,8 @@ class TestRunJob:
         class FakeORM:
             run_id = "r1"
             thread_id = "t1"
+            assistant_id = None
+            created_at = None
             execution_params = params
 
         restored = RunJob.from_run_orm(FakeORM())
@@ -145,6 +149,8 @@ class TestRunJob:
         class FakeORM:
             run_id = "r1"
             thread_id = "t1"
+            assistant_id = None
+            created_at = None
             execution_params = params
 
         restored = RunJob.from_run_orm(FakeORM())
@@ -156,6 +162,8 @@ class TestRunJob:
         class LegacyORM:
             run_id = "r1"
             thread_id = "t1"
+            assistant_id = None
+            created_at = None
             execution_params = {
                 "graph_id": "g1",
                 "user": {"identity": "u1", "is_authenticated": True, "permissions": []},
@@ -194,6 +202,8 @@ class TestRunJob:
         class FakeORM:
             run_id = "r1"
             thread_id = "t1"
+            assistant_id = None
+            created_at = None
             execution_params = params
 
         assert RunJob.from_run_orm(FakeORM()).execution.durability == "exit"

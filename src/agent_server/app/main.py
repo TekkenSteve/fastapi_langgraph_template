@@ -60,6 +60,8 @@ from agent_server.usecase.execution.lease_reaper import lease_reaper
 from agent_server.usecase.execution.run_preparation import get_default_durability
 from agent_server.usecase.streaming.broker import broker_manager
 from agent_server.usecase.thread_ttl import get_thread_ttl_config, thread_ttl_sweeper
+from agent_server.usecase.webhook_delivery import webhook_dispatcher
+from agent_server.usecase.webhook_policy import get_webhook_settings
 
 OPENAPI_TAGS: list[dict[str, Any]] = [
     {"name": "Assistants", "description": "A configured instance of a graph."},
@@ -99,8 +101,10 @@ def _log_connection_help(error: Exception) -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """FastAPI lifespan context manager for startup/shutdown"""
-    # Resolve the durability default up front: an invalid value fails the boot, not every run.
+    # Resolve validated config up front so bad values / missing header env vars
+    # fail the boot instead of every run or every webhook call.
     get_default_durability()
+    get_webhook_settings()
 
     # Multi-pod K8s: set RUN_MIGRATIONS_ON_STARTUP=false + run `make migrate-up`
     # out-of-band.
@@ -152,7 +156,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # in reverse start order both on shutdown and when a later startup step
     # fails — without this, a startup failure after the pools are open leaves
     # them open and the process hangs on exit instead of failing.
-    # Shutdown order: ttl sweeper → cron → reaper → executor (drains jobs) → broker → Redis → DB
+    # Shutdown order: ttl sweeper → cron → reaper → executor drains jobs → webhooks → broker → Redis → DB
     async with AsyncExitStack() as stack:
         stack.push_async_callback(db_manager.close)
 
@@ -187,6 +191,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Start broker manager (cleanup task for in-memory, cancel listener for Redis)
         await broker_manager.start()
         stack.push_async_callback(broker_manager.stop)
+
+        # Register webhooks before the executor so reverse-order shutdown drains
+        # executor jobs first, then the webhooks those jobs queued.
+        stack.push_async_callback(webhook_dispatcher.stop)
 
         # Start executor (spawns worker coroutines when Redis is enabled)
         await executor.start()

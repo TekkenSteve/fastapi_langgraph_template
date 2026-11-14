@@ -269,6 +269,10 @@ class TestDeleteThreadById:
         with (
             patch("agent_server.usecase.execution.run_cleanup._get_session_maker", return_value=mock_maker),
             patch(
+                "agent_server.usecase.execution.run_cleanup.interrupt_run_before_delete",
+                new_callable=AsyncMock,
+            ),
+            patch(
                 "agent_server.usecase.execution.run_cleanup.streaming_service.cancel_run",
                 new_callable=AsyncMock,
             ) as mock_cancel,
@@ -328,6 +332,10 @@ class TestDeleteThreadById:
         with (
             patch("agent_server.usecase.execution.run_cleanup._get_session_maker", return_value=mock_maker),
             patch(
+                "agent_server.usecase.execution.run_cleanup.interrupt_run_before_delete",
+                new_callable=AsyncMock,
+            ),
+            patch(
                 "agent_server.usecase.execution.run_cleanup.streaming_service.cancel_run",
                 new_callable=AsyncMock,
             ),
@@ -374,6 +382,10 @@ class TestDeleteThreadById:
         with (
             patch("agent_server.usecase.execution.run_cleanup._get_session_maker", return_value=mock_maker),
             patch(
+                "agent_server.usecase.execution.run_cleanup.interrupt_run_before_delete",
+                new_callable=AsyncMock,
+            ),
+            patch(
                 "agent_server.usecase.execution.run_cleanup.streaming_service.cancel_run",
                 new_callable=AsyncMock,
             ),
@@ -417,6 +429,10 @@ class TestDeleteThreadById:
 
         with (  # noqa: SIM117
             patch("agent_server.usecase.execution.run_cleanup._get_session_maker", return_value=mock_maker),
+            patch(
+                "agent_server.usecase.execution.run_cleanup.interrupt_run_before_delete",
+                new_callable=AsyncMock,
+            ),
             patch(
                 "agent_server.usecase.execution.run_cleanup.streaming_service.cancel_run",
                 new_callable=AsyncMock,

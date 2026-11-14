@@ -19,6 +19,8 @@ from agent_server.infra.serializers import GeneralSerializer
 from agent_server.repo.orm import Run as RunORM
 from agent_server.repo.orm import Thread as ThreadORM
 from agent_server.repo.orm import _get_session_maker
+from agent_server.usecase.execution.run_job import RunJob
+from agent_server.usecase.webhook_delivery import RunOutcome, job_for_run, report_run
 
 logger = structlog.getLogger(__name__)
 _serializer = GeneralSerializer()
@@ -108,8 +110,9 @@ async def interrupt_unowned_run(
     thread_id: str,
     *,
     user_id: str,
+    webhook_job: RunJob | None,
 ) -> bool:
-    """Interrupt an active run only when it has no live database owner.
+    """Interrupt an active run only when it has no live database owner, and report it.
 
     The ownership predicate is checked in the UPDATE so a worker that renews
     or claims the run concurrently cannot be overwritten by the API process.
@@ -145,6 +148,7 @@ async def interrupt_unowned_run(
 
     await set_thread_status_if_no_active_runs(session, [thread_id], "idle", user_id=user_id)
     await session.commit()
+    report_run(webhook_job, RunOutcome(status="interrupted"), run_id=run_id)
     logger.info("Interrupted unowned run", run_id=run_id, thread_id=thread_id)
     return True
 
@@ -156,13 +160,16 @@ async def finalize_run(
     user_id: str,
     status: str,
     thread_status: str,
+    webhook_job: RunJob | None,
     output: Any = None,
     error: str | None = None,
+    error_type: str = "Error",
 ) -> bool:
-    """Conditionally update run and thread status in one transaction.
+    """Conditionally update run and thread status in one transaction, then report the run.
 
     Returns false when another actor has already made the run terminal. This
-    prevents an expired worker from overwriting a reconciled cancellation.
+    prevents an expired worker from overwriting a reconciled cancellation, and
+    leaves the run's webhook to that actor, so every run is reported once.
     """
     validated_run = validate_run_status(status)
     validated_thread = validate_thread_status(thread_status)
@@ -200,9 +207,28 @@ async def finalize_run(
             user_id=user_id,
         )
         await session.commit()
+        webhook_error = {"error": error_type, "message": error} if error is not None else None
+        report_run(webhook_job, RunOutcome(status=validated_run, error=webhook_error), run_id=run_id)
 
     logger.info("Finalized run", run_id=run_id, status=validated_run, thread_status=validated_thread)
     return True
+
+
+async def interrupt_run_before_delete(run: RunORM) -> None:
+    """Commit the cancel of an active run whose row is about to be deleted, so it is still reported.
+
+    A worker in another process would find the row gone and could neither
+    finalize nor report the run.
+    """
+    await finalize_run(
+        run.run_id,
+        run.thread_id,
+        user_id=run.user_id,
+        status="interrupted",
+        thread_status="idle",
+        output={},
+        webhook_job=job_for_run(run),
+    )
 
 
 def _safe_serialize(output: Any, run_id: str) -> Any:

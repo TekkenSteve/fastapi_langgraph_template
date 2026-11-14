@@ -4,6 +4,7 @@ This file contains shared fixtures and configuration that are available
 to all tests across the test suite.
 """
 
+import ipaddress
 import warnings
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -11,6 +12,7 @@ from unittest.mock import AsyncMock
 import pytest
 from httpx import HTTPStatusError
 
+from agent_server.usecase import webhook_policy
 from tests.fixtures.auth import DummyUser
 from tests.fixtures.clients import (
     create_test_app,
@@ -155,6 +157,27 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
         tier = _TIER_BY_DIRECTORY.get(parts[parts.index("tests") + 1])
         if tier:
             item.add_marker(getattr(pytest.mark, tier))
+
+
+# Public and outside every blocked range; what the offline resolver answers for any host.
+WEBHOOK_TEST_ADDRESS = ipaddress.ip_address("93.184.215.14")
+
+
+@pytest.fixture(autouse=True)
+def isolated_webhook_policy(monkeypatch: pytest.MonkeyPatch):
+    """Start every test with no webhooks config and offline DNS."""
+
+    async def _resolve_offline(host: str, port: int) -> list[webhook_policy.IPAddress]:
+        return [WEBHOOK_TEST_ADDRESS]
+
+    monkeypatch.setattr(webhook_policy, "load_webhooks_config", lambda: None)
+    monkeypatch.setattr(webhook_policy, "load_http_config", lambda: None)
+    monkeypatch.setattr(webhook_policy, "_resolve", _resolve_offline)
+    webhook_policy.get_webhook_settings.cache_clear()
+    webhook_policy.webhooks_enabled.cache_clear()
+    yield
+    webhook_policy.get_webhook_settings.cache_clear()
+    webhook_policy.webhooks_enabled.cache_clear()
 
 
 # --- AUTO-SKIP GEO-BLOCK FAILURES ---

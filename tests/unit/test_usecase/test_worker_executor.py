@@ -63,6 +63,8 @@ def _make_run_orm(
     orm = MagicMock()
     orm.run_id = run_id
     orm.thread_id = thread_id
+    orm.assistant_id = None
+    orm.created_at = None
     orm.status = status
     orm.execution_params = execution_params or {
         "graph_id": "test-graph",
@@ -637,6 +639,7 @@ class TestExecuteAndRelease:
                 return_value=(thread_id, "user-1"),
             ),
             patch(f"{MODULE}.finalize_run", new_callable=AsyncMock) as mock_finalize,
+            patch(f"{MODULE}._load_webhook_job", new_callable=AsyncMock, return_value=None),
             patch(f"{MODULE}._release_lease") as mock_release,
         ):
             mock_settings.worker.BG_JOB_TIMEOUT_SECS = 0.01  # Very short timeout
@@ -651,6 +654,8 @@ class TestExecuteAndRelease:
             status="error",
             thread_status="error",
             error="Job exceeded maximum execution time",
+            error_type="TimeoutError",
+            webhook_job=None,
         )
         mock_release.assert_awaited_once_with(run_id, "worker-0")
         assert timeout_marker_seen is True
@@ -678,6 +683,7 @@ class TestExecuteAndRelease:
                 return_value=(thread_id, "user-1"),
             ),
             patch(f"{MODULE}.finalize_run", new_callable=AsyncMock, return_value=True) as mock_finalize,
+            patch(f"{MODULE}._load_webhook_job", new_callable=AsyncMock, return_value=None),
         ):
             mock_settings.worker.BG_JOB_TIMEOUT_SECS = 60
             with pytest.raises(asyncio.CancelledError):
@@ -690,6 +696,7 @@ class TestExecuteAndRelease:
             status="interrupted",
             thread_status="idle",
             output={},
+            webhook_job=None,
         )
         assert run_id not in explicit_run_cancellations
         assert run_id not in active_runs
@@ -719,6 +726,7 @@ class TestExecuteAndRelease:
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("database unavailable") if failure_source == "finalize" else None,
             ),
+            patch(f"{MODULE}._load_webhook_job", new_callable=AsyncMock, return_value=None),
             patch(f"{MODULE}.logger.exception") as mock_log_exception,
         ):
             mock_settings.worker.BG_JOB_TIMEOUT_SECS = 60
@@ -774,6 +782,7 @@ class TestExecuteAndRelease:
                 new_callable=AsyncMock,
                 side_effect=delayed_finalize,
             ) as mock_finalize,
+            patch(f"{MODULE}._load_webhook_job", new_callable=AsyncMock, return_value=None),
         ):
             mock_settings.worker.BG_JOB_TIMEOUT_SECS = 60
             task = asyncio.create_task(executor._execute_and_release(run_id, "worker-0", semaphore))
@@ -797,6 +806,7 @@ class TestExecuteAndRelease:
             status="interrupted",
             thread_status="idle",
             output={},
+            webhook_job=None,
         )
         assert run_id not in explicit_run_cancellations
         assert run_id not in active_runs

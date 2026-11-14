@@ -95,6 +95,7 @@ class TestFinalizeRun:
                 user_id="user-1",
                 status="success",
                 thread_status="idle",
+                webhook_job=None,
             )
 
         assert finalized is True
@@ -131,6 +132,7 @@ class TestFinalizeRun:
                 thread_status="error",
                 output={"key": "val"},
                 error="something broke",
+                webhook_job=None,
             )
 
         assert finalized is True
@@ -162,6 +164,7 @@ class TestFinalizeRun:
                 user_id="user-1",
                 status="success",
                 thread_status="idle",
+                webhook_job=None,
             )
 
         mock_ser.assert_not_called()
@@ -189,6 +192,7 @@ class TestFinalizeRun:
                 user_id="user-1",
                 status="success",
                 thread_status="idle",
+                webhook_job=None,
             )
 
         assert finalized is False
@@ -263,7 +267,7 @@ class TestInterruptUnownedRun:
             "agent_server.usecase.execution.run_status.set_thread_status_if_no_active_runs",
             new_callable=AsyncMock,
         ) as mock_set_thread:
-            interrupted = await interrupt_unowned_run(session, "run-1", "thread-1", user_id="user-1")
+            interrupted = await interrupt_unowned_run(session, "run-1", "thread-1", user_id="user-1", webhook_job=None)
 
         assert interrupted is True
         statement = session.execute.await_args.args[0]
@@ -287,7 +291,7 @@ class TestInterruptUnownedRun:
             "agent_server.usecase.execution.run_status.set_thread_status_if_no_active_runs",
             new_callable=AsyncMock,
         ) as mock_set_thread:
-            interrupted = await interrupt_unowned_run(session, "run-1", "thread-1", user_id="user-1")
+            interrupted = await interrupt_unowned_run(session, "run-1", "thread-1", user_id="user-1", webhook_job=None)
 
         assert interrupted is False
         mock_set_thread.assert_not_awaited()

@@ -40,6 +40,9 @@ from agent_server.usecase.execution.run_executor import (
 )
 from agent_server.usecase.execution.run_job import RunJob
 from agent_server.usecase.execution.run_status import finalize_run
+from agent_server.usecase.webhook_delivery import job_for_run
+
+_TIMEOUT_ERROR = "Job exceeded maximum execution time"
 
 logger = structlog.getLogger(__name__)
 
@@ -75,6 +78,7 @@ async def _cleanup_cancelled_execution(run_id: str, execution_task: asyncio.Task
             status="interrupted",
             thread_status="idle",
             output={},
+            webhook_job=await _load_webhook_job(run_id),
         )
     except Exception:
         logger.exception("Failed to persist explicit run cancellation", run_id=run_id)
@@ -302,7 +306,9 @@ class WorkerExecutor(BaseExecutor):
                         user_id=user_id,
                         status="error",
                         thread_status="error",
-                        error="Job exceeded maximum execution time",
+                        error=_TIMEOUT_ERROR,
+                        error_type="TimeoutError",
+                        webhook_job=await _load_webhook_job(run_id),
                     )
                 await _release_lease(run_id, worker_name)
         except asyncio.CancelledError:
@@ -406,6 +412,17 @@ class WorkerExecutor(BaseExecutor):
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
+
+
+async def _load_webhook_job(run_id: str) -> RunJob | None:
+    """The run's job when it has a webhook, read before the wrapper finalizes it.
+
+    Once the run is terminal, stateless cleanup may delete its row, so a later read could find nothing.
+    """
+    maker = _get_session_maker()
+    async with maker() as session:
+        run = await session.scalar(select(RunORM).where(RunORM.run_id == run_id))
+    return job_for_run(run) if run is not None else None
 
 
 async def _get_run_identity(run_id: str) -> tuple[str, str] | None:

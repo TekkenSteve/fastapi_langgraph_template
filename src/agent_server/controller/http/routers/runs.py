@@ -26,7 +26,7 @@ from agent_server.repo.orm import Thread as ThreadORM
 from agent_server.repo.orm import _get_session_maker, get_session
 from agent_server.usecase.execution.active_runs import active_runs
 from agent_server.usecase.execution.run_preparation import _prepare_run
-from agent_server.usecase.execution.run_status import interrupt_unowned_run
+from agent_server.usecase.execution.run_status import interrupt_run_before_delete, interrupt_unowned_run
 from agent_server.usecase.execution.run_waiters import (
     TERMINAL_STATES,
     encode_output,
@@ -36,6 +36,7 @@ from agent_server.usecase.execution.run_waiters import (
 from agent_server.usecase.streaming.broker import broker_manager
 from agent_server.usecase.streaming.streaming_service import streaming_service
 from agent_server.usecase.thread_naming import maybe_name_thread
+from agent_server.usecase.webhook_delivery import job_for_run
 
 router = APIRouter(tags=["Thread Runs"], dependencies=auth_dependency)
 
@@ -62,6 +63,7 @@ async def _request_run_interruption(
         run_orm.run_id,
         run_orm.thread_id,
         user_id=run_orm.user_id,
+        webhook_job=job_for_run(run_orm),
     )
 
     if reconciled:
@@ -636,6 +638,7 @@ async def delete_run(
     # If forcing and active, cancel first
     if force and run_orm.status in ["pending", "running"]:
         logger.info(f"[delete_run] force-cancelling active run run_id={run_id}")
+        await interrupt_run_before_delete(run_orm)
         await streaming_service.cancel_run(run_id)
         # Best-effort: wait for bg task to settle
         task = active_runs.get(run_id)

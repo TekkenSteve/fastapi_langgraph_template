@@ -7,6 +7,7 @@ Single source of truth for executing a graph run. Both LocalExecutor
 """
 
 import asyncio
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import structlog
@@ -16,8 +17,12 @@ from agent_server.auth.ctx import with_auth_ctx
 from agent_server.config.settings import settings
 from agent_server.infra.observability.otel import flush_otel_spans
 from agent_server.infra.redis import redis_manager
-from agent_server.repo.graphs.langgraph_service import create_run_config, get_langgraph_service
-from agent_server.usecase.execution.active_runs import active_runs
+from agent_server.repo.graphs.langgraph_service import (
+    create_run_config,
+    create_thread_config,
+    get_langgraph_service,
+)
+from agent_server.usecase.execution.active_runs import active_runs, executing_runs
 from agent_server.usecase.execution.run_job import RunJob
 from agent_server.usecase.execution.run_status import finalize_run, start_run
 from agent_server.usecase.execution.run_utils import map_command_to_langgraph
@@ -25,6 +30,7 @@ from agent_server.usecase.streaming.broker import broker_manager
 from agent_server.usecase.streaming.graph_streaming import stream_graph_events
 from agent_server.usecase.streaming.streaming_service import streaming_service
 from agent_server.usecase.streaming.v2.native_stream import stream_native_v3_events
+from agent_server.usecase.webhook_delivery import finish_executing
 
 logger = structlog.getLogger(__name__)
 
@@ -51,12 +57,19 @@ async def execute_run(job: RunJob) -> None:
     resumes_elsewhere = False
     finalized = False
 
+    # What the completion webhook reports; partial values survive a failed run.
+    result = _GraphResult()
+    started_at: datetime | None = None
+    # Joined before the first await: a cancel that lands after this point
+    # hands its webhook report to this executor (see report_run).
+    executing_runs.add(run_id)
     try:
         if not await start_run(run_id, user_id=user_id):
             logger.info("Run became terminal before execution started", run_id=run_id)
             return
 
-        final_output = await _stream_graph(job)
+        started_at = datetime.now(UTC)
+        final_output = await _stream_graph(job, result)
 
         if final_output.has_interrupt:
             finalized = await finalize_run(
@@ -66,6 +79,7 @@ async def execute_run(job: RunJob) -> None:
                 status="interrupted",
                 thread_status="interrupted",
                 output=final_output.data,
+                webhook_job=job,
             )
         else:
             finalized = await finalize_run(
@@ -75,6 +89,7 @@ async def execute_run(job: RunJob) -> None:
                 status="success",
                 thread_status="idle",
                 output=final_output.data,
+                webhook_job=job,
             )
 
     except asyncio.CancelledError:
@@ -95,6 +110,8 @@ async def execute_run(job: RunJob) -> None:
                 thread_status="error",
                 output={},
                 error=_TIMEOUT_ERROR,
+                error_type="TimeoutError",
+                webhook_job=job,
             )
             if finalized:
                 await _best_effort_signal(
@@ -111,6 +128,7 @@ async def execute_run(job: RunJob) -> None:
                 status="interrupted",
                 thread_status="idle",
                 output={},
+                webhook_job=job,
             )
             if finalized:
                 await _best_effort_signal(streaming_service.signal_run_cancelled, run_id)
@@ -126,6 +144,8 @@ async def execute_run(job: RunJob) -> None:
             thread_status="error",
             output={},
             error=str(exc),
+            error_type=type(exc).__name__,
+            webhook_job=job,
         )
         if finalized:
             await _best_effort_signal(streaming_service.signal_run_error, run_id, safe_message, type(exc).__name__)
@@ -139,6 +159,9 @@ async def execute_run(job: RunJob) -> None:
         _timeout_cancellations.discard(run_id)
         active_runs.pop(run_id, None)
         if not resumes_elsewhere:
+            # Leaves executing_runs and sends any report a reconciling caller
+            # kept for this executor (with the values it streamed).
+            finish_executing(job, values=result.state, run_started_at=started_at)
             await streaming_service.cleanup_run(run_id)
             await _signal_run_done(run_id)
             # Flush last: a slow or failing export must not delay stream
@@ -182,24 +205,45 @@ async def _best_effort_signal(fn: Any, *args: Any) -> None:
         logger.warning("Signal failed (best-effort, DB status already committed)", fn=fn.__name__)
 
 
+def _is_state(data: Any) -> bool:
+    # Interrupt notices are re-emitted as values events but carry no state.
+    return isinstance(data, dict) and set(data) != {"__interrupt__"}
+
+
 class _GraphResult:
     """Accumulates output and interrupt state during graph streaming."""
 
-    __slots__ = ("data", "has_interrupt")
+    __slots__ = ("data", "has_interrupt", "state")
 
     def __init__(self) -> None:
         self.data: dict[str, Any] = {}
         self.has_interrupt: bool = False
+        # Graph state for the completion webhook; None until one is seen or read.
+        self.state: dict[str, Any] | None = None
 
 
-async def _stream_graph(job: RunJob) -> _GraphResult:
-    """Load the graph, stream events to the broker, return final output."""
+async def _read_final_state(graph: Any, job: RunJob) -> dict[str, Any] | None:
+    """The thread's latest checkpointed values, whichever stream modes the client chose."""
+    try:
+        snapshot = await graph.aget_state(create_thread_config(job.identity.thread_id, job.user))
+    except Exception:
+        # Best effort: the webhook falls back to the values streamed so far.
+        logger.warning("Could not read the final state for the run webhook", run_id=job.identity.run_id, exc_info=True)
+        return None
+    return snapshot.values if snapshot is not None else None
+
+
+async def _stream_graph(job: RunJob, result: _GraphResult | None = None) -> _GraphResult:
+    """Load the graph, stream events to the broker, return final output.
+
+    Pass *result* to keep the values streamed so far when the run fails midway.
+    """
     run_config = _build_run_config(job)
     execution_input = _resolve_input(job)
     stream_modes = _resolve_stream_modes(job.execution.stream_mode)
 
     langgraph_service = get_langgraph_service()
-    result = _GraphResult()
+    result = result if result is not None else _GraphResult()
 
     async with (
         langgraph_service.get_graph(
@@ -215,6 +259,12 @@ async def _stream_graph(job: RunJob) -> _GraphResult:
             await _stream_native_v2(job, graph, execution_input, run_config, result)
         else:
             await _stream_legacy(job, graph, execution_input, run_config, stream_modes, result)
+        if job.behavior.webhook:
+            # Runs streaming only updates/messages never emit a values event,
+            # so read the checkpoint after the stream instead.
+            final_state = await _read_final_state(graph, job)
+            if final_state is not None:
+                result.state = final_state
 
     return result
 
@@ -247,6 +297,8 @@ async def _stream_legacy(
             result.has_interrupt = True
         if event_type.startswith("values"):
             result.data = event_data
+            if _is_state(event_data):
+                result.state = event_data
 
 
 async def _stream_native_v2(
@@ -281,6 +333,8 @@ async def _stream_native_v2(
             result.has_interrupt = True
         if method == "values" and isinstance(data, dict):
             result.data = data
+            if _is_state(data):
+                result.state = data
 
 
 def _build_run_config(job: RunJob) -> dict[str, Any]:

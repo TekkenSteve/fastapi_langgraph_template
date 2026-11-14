@@ -61,6 +61,7 @@ def _make_request() -> MagicMock:
     request.interrupt_after = None
     request.multitask_strategy = None
     request.stream_subgraphs = False
+    request.webhook = None
     request.metadata = None
     return request
 

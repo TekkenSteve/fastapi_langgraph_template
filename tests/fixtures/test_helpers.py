@@ -93,6 +93,7 @@ class DummyRun:
         self.metadata = metadata or {}
         self.input = input_data or {"message": "test"}
         self.output = output_data
+        self.execution_params = None
         self.created_at = datetime.now(UTC)
         self.updated_at = datetime.now(UTC)
 

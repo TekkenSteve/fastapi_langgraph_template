@@ -33,6 +33,7 @@ from agent_server.usecase.execution.executor import executor
 from agent_server.usecase.execution.run_job import RunBehavior, RunExecution, RunIdentity, RunJob
 from agent_server.usecase.execution.run_status import set_thread_status
 from agent_server.usecase.execution.run_utils import _merge_jsonb
+from agent_server.usecase.webhook_policy import ensure_webhook_allowed
 
 logger = structlog.getLogger(__name__)
 
@@ -255,13 +256,18 @@ async def _prepare_run(
     *,
     initial_status: str,
     event_streaming_v2: bool = False,
+    validate_webhook: bool = True,
 ) -> tuple[str, Run, RunJob]:
     """Shared run-creation logic used by create, stream, and wait endpoints.
 
     Validates inputs, resolves the assistant, persists the RunORM record,
     builds a RunJob, submits it to the executor, and returns the triple
-    ``(run_id, run_model, job)``.
+    ``(run_id, run_model, job)``. Cron fires pass ``validate_webhook=False``:
+    their webhook passed at cron create/update and is re-checked before each
+    call, so a later policy change skips the call instead of blocking the run.
     """
+    if validate_webhook:
+        await ensure_webhook_allowed(request.webhook)
     await _validate_resume_command(session, thread_id, request.command)
 
     run_id = str(uuid4())
@@ -324,8 +330,15 @@ async def _prepare_run(
     await set_thread_status(session, thread_id, "busy")
 
     # Build the RunJob before persisting so we can store execution_params
+    now = datetime.now(UTC)
     job = RunJob(
-        identity=RunIdentity(run_id=run_id, thread_id=thread_id, graph_id=assistant.graph_id),
+        identity=RunIdentity(
+            run_id=run_id,
+            thread_id=thread_id,
+            graph_id=assistant.graph_id,
+            assistant_id=resolved_assistant_id,
+            created_at=now,
+        ),
         user=user,
         execution=RunExecution(
             input_data=request.input,  # preserve None so LangGraph resumes from checkpoint
@@ -342,6 +355,7 @@ async def _prepare_run(
             interrupt_after=request.interrupt_after,
             multitask_strategy=request.multitask_strategy,
             subgraphs=request.stream_subgraphs or False,
+            webhook=request.webhook or None,
         ),
         run_metadata=request.metadata or {},
     )
@@ -357,7 +371,6 @@ async def _prepare_run(
         "graph_id": assistant.graph_id,
     }
 
-    now = datetime.now(UTC)
     run_orm = RunORM(
         run_id=run_id,
         thread_id=thread_id,

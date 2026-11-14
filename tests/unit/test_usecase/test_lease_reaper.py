@@ -61,8 +61,8 @@ class TestRecoverCrashedRuns:
         session = AsyncMock()
         locked = MagicMock()
         locked.fetchall.return_value = [
-            ("run-1", "thread-1", "user-1", {"_retry_count": 0}),
-            ("run-2", "thread-2", "user-2", {"_retry_count": 1}),
+            ("run-1", "thread-1", "user-1", {"_retry_count": 0}, None, None),
+            ("run-2", "thread-2", "user-2", {"_retry_count": 1}, None, None),
         ]
         updated_run_1 = MagicMock()
         updated_run_1.scalar_one_or_none.return_value = "run-1"
@@ -112,7 +112,7 @@ class TestRecoverCrashedRuns:
         session = AsyncMock()
         locked = MagicMock()
         locked.fetchall.return_value = [
-            ("run-1", "thread-1", "user-1", {"_retry_count": 1}),
+            ("run-1", "thread-1", "user-1", {"_retry_count": 1}, None, None),
         ]
         unchanged = MagicMock()
         unchanged.scalar_one_or_none.return_value = None

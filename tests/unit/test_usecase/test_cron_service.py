@@ -771,7 +771,7 @@ class TestCreateCronExtended:
             schedule="*/5 * * * *",
             input={"x": 1},
             config={"y": 2},
-            webhook="https://hook.example.com",
+            webhook="https://8.8.8.8/hook",
         )
 
         await cron_service.create_cron(req, "test-user")
@@ -779,7 +779,7 @@ class TestCreateCronExtended:
         added_obj = mock_session.add.call_args[0][0]
         assert added_obj.payload["input"] == {"x": 1}
         assert added_obj.payload["config"] == {"y": 2}
-        assert added_obj.payload["webhook"] == "https://hook.example.com"
+        assert added_obj.payload["webhook"] == "https://8.8.8.8/hook"
 
     @pytest.mark.asyncio
     async def test_next_run_date_skips_first_occurrence(

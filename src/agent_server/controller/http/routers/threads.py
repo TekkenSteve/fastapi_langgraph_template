@@ -45,6 +45,7 @@ from agent_server.repo.orm import Thread as ThreadORM
 from agent_server.repo.orm import ThreadTTL as ThreadTTLORM
 from agent_server.repo.orm import _get_session_maker, get_session
 from agent_server.usecase.execution.active_runs import active_runs
+from agent_server.usecase.execution.run_status import interrupt_run_before_delete
 from agent_server.usecase.streaming.streaming_service import streaming_service
 from agent_server.usecase.thread_state_service import ThreadStateService
 from agent_server.usecase.thread_ttl import get_thread_ttl_config, prune_expired_threads_for_user, prune_threads_by_id
@@ -911,6 +912,7 @@ async def delete_thread(
         logger.info(f"Cancelling {len(active_runs_list)} active runs for thread {thread_id}")
         for run in active_runs_list:
             run_id = run.run_id
+            await interrupt_run_before_delete(run)
             await streaming_service.cancel_run(run_id)
             task = active_runs.pop(run_id, None)
             if task and not task.done():

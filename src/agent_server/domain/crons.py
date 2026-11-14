@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from agent_server.config.settings import settings
 from agent_server.domain.runs import Durability
@@ -22,8 +22,8 @@ OnRunCompleted = Literal["delete", "keep"]
 def _validate_webhook_url(value: str | None) -> str | None:
     """Reject malformed or non-http(s) webhook URLs at the API boundary.
 
-    The cron record stores ``webhook`` verbatim. When a future runtime wires
-    webhook delivery this is the SSRF entry point, so we constrain it now.
+    The cron record stores ``webhook`` verbatim and every fired run calls it.
+    The server's webhooks.url policy is applied on top, in CronService.
     """
     if value is None:
         return None
@@ -45,6 +45,8 @@ def _validate_payload_size(model: BaseModel) -> None:
 
 class CronCreate(BaseModel):
     """Request body for creating a cron job (stateless or thread-bound)."""
+
+    _check_webhook = field_validator("webhook")(_validate_webhook_url)
 
     assistant_id: str = Field(..., max_length=_STR_FIELD_MAX_LEN)
     schedule: str = Field(..., max_length=_SCHEDULE_MAX_LEN)
@@ -71,7 +73,6 @@ class CronCreate(BaseModel):
 
     @model_validator(mode="after")
     def _check(self) -> "CronCreate":
-        self.webhook = _validate_webhook_url(self.webhook)
         if isinstance(self.stream_mode, str) and len(self.stream_mode) > _STREAM_MODE_MAX_LEN:
             raise ValueError("stream_mode is too long")
         if self.end_time is not None:
@@ -106,6 +107,10 @@ class CronResponse(BaseModel):
 class CronUpdate(BaseModel):
     """Request body for updating an existing cron job."""
 
+    # A field validator, unlike assigning in _check, keeps "webhook" out of model_fields_set when it
+    # was omitted, so update_cron can tell an omitted webhook from an explicit null that removes it.
+    _check_webhook = field_validator("webhook")(_validate_webhook_url)
+
     schedule: str | None = Field(None, max_length=_SCHEDULE_MAX_LEN)
     end_time: datetime | None = None
     input: dict[str, Any] | None = None
@@ -126,7 +131,6 @@ class CronUpdate(BaseModel):
 
     @model_validator(mode="after")
     def _check(self) -> "CronUpdate":
-        self.webhook = _validate_webhook_url(self.webhook)
         if isinstance(self.stream_mode, str) and len(self.stream_mode) > _STREAM_MODE_MAX_LEN:
             raise ValueError("stream_mode is too long")
         if self.end_time is not None:
