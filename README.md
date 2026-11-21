@@ -114,6 +114,10 @@ Two files:
 
 `GRAPHS_CONFIG` env var points at a different config file when needed (e.g. `langgraph.auth.json` for the auth-enabled stack).
 
+`auth.path` is strict: if it is set but the module cannot be loaded (missing file, import error, or the named variable is not an `Auth` instance), startup fails instead of falling back to the shared `anonymous` identity.
+
+v2 `run.start` / `input.respond` authorize as `threads.create_run` plus `assistants.read`, the same chain as v1 run creation.
+
 A graph entry is either the path string above or an object form with metadata — `"shopping_agent": {"path": "./src/graphs/shopping_agent/graph.py:graph", "description": "…"}`. The description is synced into the graph's default assistant at startup (a changed one bumps its version; the old description stays in the version history).
 
 ## Common tasks

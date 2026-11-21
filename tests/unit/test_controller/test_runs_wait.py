@@ -392,7 +392,7 @@ class TestWaitForRunAuthHandlers:
         session.scalar.return_value = None  # new thread passes ownership check
 
         with (
-            patch("agent_server.controller.http.routers.runs.handle_event", new_callable=AsyncMock) as mock_handle,
+            patch("agent_server.usecase.execution.run_preparation.handle_event", new_callable=AsyncMock) as mock_handle,
             patch("agent_server.controller.http.routers.runs._prepare_run", new_callable=AsyncMock) as mock_prepare,
             patch("agent_server.controller.http.routers.runs.heartbeat_wait_body", return_value=_single_event_stream()),
             patch(
@@ -431,7 +431,7 @@ class TestWaitForRunAuthHandlers:
         session.scalar.return_value = None
 
         with (
-            patch("agent_server.controller.http.routers.runs.handle_event", new_callable=AsyncMock) as mock_handle,
+            patch("agent_server.usecase.execution.run_preparation.handle_event", new_callable=AsyncMock) as mock_handle,
             patch("agent_server.controller.http.routers.runs._prepare_run", new_callable=AsyncMock) as mock_prepare,
             patch(
                 "agent_server.controller.http.routers.runs._get_session_maker",
@@ -461,7 +461,7 @@ class TestWaitForRunAuthHandlers:
         session.scalar.return_value = None
 
         with (
-            patch("agent_server.controller.http.routers.runs.handle_event", new_callable=AsyncMock) as mock_handle,
+            patch("agent_server.usecase.execution.run_preparation.handle_event", new_callable=AsyncMock) as mock_handle,
             patch("agent_server.controller.http.routers.runs._prepare_run", new_callable=AsyncMock) as mock_prepare,
             patch("agent_server.controller.http.routers.runs.heartbeat_wait_body", return_value=_single_event_stream()),
             patch(

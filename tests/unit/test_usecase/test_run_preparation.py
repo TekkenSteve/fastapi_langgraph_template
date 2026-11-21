@@ -3,15 +3,17 @@
 from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 
 from agent_server.config.graph_config import CheckpointerConfig
 from agent_server.domain.runs import RunCreate
+from agent_server.domain.user import User
 from agent_server.usecase.execution import run_preparation as mod
 from agent_server.usecase.execution.run_preparation import (
+    _apply_create_run_auth,
     _resolve_checkpoint,
     _resolve_durability,
     _validate_resume_command,
@@ -184,3 +186,62 @@ class TestResolveDurability:
     def test_none_without_run_value_or_server_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(mod, "get_default_durability", lambda: None)
         assert _resolve_durability(RunCreate(assistant_id="agent", input={"x": 1})) is None
+
+
+class TestApplyCreateRunAuth:
+    """Unit tests for the threads.create_run auth helper's config/context merge contract."""
+
+    @pytest.fixture
+    def mock_user(self) -> User:
+        return User(identity="test-user", scopes=[])
+
+    @pytest.mark.asyncio
+    async def test_empty_filter_dict_wins_over_value_mutations(self, mock_user: User) -> None:
+        """An explicit empty dict {} suppresses in-place value mutations.
+
+        Regression: ``filters if filters`` treated {} as falsy and fell back to
+        ``value``, applying in-place mutations despite the handler returning a dict.
+        """
+        request = RunCreate(assistant_id="a", input={}, config={"original": "kept"})
+
+        def _handler(_ctx: object, value: dict) -> dict:
+            value["config"] = {"injected_via_value": True}
+            return {}
+
+        with patch(
+            "agent_server.usecase.execution.run_preparation.handle_event", new_callable=AsyncMock, side_effect=_handler
+        ):
+            await _apply_create_run_auth(mock_user, "t", request)
+
+        assert request.config == {"original": "kept"}
+
+    @pytest.mark.asyncio
+    async def test_none_result_falls_back_to_value_mutations(self, mock_user: User) -> None:
+        """A handler returning None applies its in-place value mutations."""
+        request = RunCreate(assistant_id="a", input={}, config={"original": "kept"})
+
+        def _handler(_ctx: object, value: dict) -> None:
+            value["config"] = {"injected_via_value": True}
+            return None
+
+        with patch(
+            "agent_server.usecase.execution.run_preparation.handle_event", new_callable=AsyncMock, side_effect=_handler
+        ):
+            await _apply_create_run_auth(mock_user, "t", request)
+
+        assert request.config == {"original": "kept", "injected_via_value": True}
+
+    @pytest.mark.asyncio
+    async def test_filter_dict_overrides_merge_into_request(self, mock_user: User) -> None:
+        """Config/context keys in the returned filter dict merge over the request."""
+        request = RunCreate(assistant_id="a", input={}, config={"original": "kept"})
+
+        with patch(
+            "agent_server.usecase.execution.run_preparation.handle_event",
+            new_callable=AsyncMock,
+            return_value={"config": {"injected": True}, "context": {"injected_ctx": 2}},
+        ):
+            await _apply_create_run_auth(mock_user, "t", request)
+
+        assert request.config == {"original": "kept", "injected": True}
+        assert request.context == {"injected_ctx": 2}

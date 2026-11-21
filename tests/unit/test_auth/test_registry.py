@@ -15,6 +15,7 @@ from agent_server.auth.registry import (
     EXEMPT_PATHS,
     ROUTE_AUTH_MAP,
     SELF_DISPATCHING,
+    is_self_dispatching,
     lookup_route_auth,
 )
 
@@ -131,6 +132,21 @@ def test_self_dispatching_routes_actually_authorize_themselves() -> None:
     assert "threads.py" in dispatching_modules
     assert "crons.py" in dispatching_modules
     assert "store.py" in dispatching_modules
+
+
+def test_v2_commands_route_authorizes_from_the_usecase() -> None:
+    """The commands route dispatches from the parsed command, not the JSON-RPC envelope.
+
+    Registering an enforcer here would authorize the envelope (whose ``value`` has
+    no run fields) and then let the use case start a run nobody checked.
+    """
+    import pathlib
+
+    from agent_server.usecase.streaming.v2 import commands
+
+    assert is_self_dispatching("POST", "/threads/{thread_id}/commands")
+    source = pathlib.Path(commands.__file__).read_text(encoding="utf-8")
+    assert "await _apply_create_run_auth(" in source, "v2 commands stopped authorizing the run it starts"
 
 
 def test_no_route_is_both_registered_and_exempt() -> None:

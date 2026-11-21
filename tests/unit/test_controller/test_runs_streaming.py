@@ -274,7 +274,7 @@ class TestRunsStreamingEndpoints:
         request = RunCreate(assistant_id="test-assistant", input={})
 
         with (
-            patch("agent_server.controller.http.routers.runs.handle_event", new_callable=AsyncMock) as mock_handle,
+            patch("agent_server.usecase.execution.run_preparation.handle_event", new_callable=AsyncMock) as mock_handle,
             patch("agent_server.controller.http.routers.runs._prepare_run", new_callable=AsyncMock) as mock_prepare,
             patch(
                 "agent_server.controller.http.routers.runs.streaming_service.stream_run_execution",
@@ -315,7 +315,7 @@ class TestRunsStreamingEndpoints:
         request = RunCreate(assistant_id="test-assistant", input={})
 
         with (
-            patch("agent_server.controller.http.routers.runs.handle_event", new_callable=AsyncMock) as mock_handle,
+            patch("agent_server.usecase.execution.run_preparation.handle_event", new_callable=AsyncMock) as mock_handle,
             patch("agent_server.controller.http.routers.runs._prepare_run", new_callable=AsyncMock) as mock_prepare,
             patch(
                 "agent_server.controller.http.routers.runs._get_session_maker",
@@ -349,7 +349,7 @@ class TestRunsStreamingEndpoints:
         )
 
         with (
-            patch("agent_server.controller.http.routers.runs.handle_event", new_callable=AsyncMock) as mock_handle,
+            patch("agent_server.usecase.execution.run_preparation.handle_event", new_callable=AsyncMock) as mock_handle,
             patch("agent_server.controller.http.routers.runs._prepare_run", new_callable=AsyncMock) as mock_prepare,
             patch(
                 "agent_server.controller.http.routers.runs.streaming_service.stream_run_execution",
