@@ -1,10 +1,12 @@
 """Tests for application lifespan and startup logic"""
 
 import importlib
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from agent_server.auth import middleware as auth_middleware
 from agent_server.infra.observability.base import get_observability_manager
 
 
@@ -256,6 +258,32 @@ async def test_lifespan_fails_before_any_db_work_on_invalid_durability_default(
             mock_db_manager.initialize.assert_not_called()
     finally:
         run_preparation.get_default_durability.cache_clear()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_lifespan_fails_before_any_db_work_when_configured_auth_cannot_load(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A broken auth.path stops the boot, so the server never serves every caller as anonymous."""
+    from agent_server.app import main as main_module
+
+    (tmp_path / "my_auth.py").write_text("raise RuntimeError('boom')")
+    monkeypatch.setattr(auth_middleware, "load_auth_config", lambda: {"path": "./my_auth.py:auth"})
+    monkeypatch.setattr(auth_middleware, "get_config_dir", lambda: tmp_path)
+
+    with (
+        patch("agent_server.app.main.run_migrations_async", new_callable=AsyncMock) as mock_migrations,
+        patch("agent_server.app.main.db_manager") as mock_db_manager,
+    ):
+        mock_db_manager.initialize = AsyncMock()
+
+        with pytest.raises(auth_middleware.AuthLoadError, match="boom"):
+            async with main_module.lifespan(MagicMock()):
+                pass
+
+        mock_migrations.assert_not_called()
+        mock_db_manager.initialize.assert_not_called()
 
 
 # --- startup unwinding (AsyncExitStack lifespan) --------------------------------

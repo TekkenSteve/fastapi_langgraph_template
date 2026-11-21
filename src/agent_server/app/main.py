@@ -21,6 +21,7 @@ from agent_server.app.route_merger import (
 )
 from agent_server.auth.deps import require_auth
 from agent_server.auth.enforcement import apply_auth_enforcement
+from agent_server.auth.middleware import get_auth_backend
 from agent_server.config.graph_config import (
     CorsConfig,
     HttpConfig,
@@ -105,6 +106,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # fail the boot instead of every run or every webhook call.
     get_default_durability()
     get_webhook_settings()
+    # A configured auth.path that cannot load must stop the boot; it never falls back to anonymous.
+    get_auth_backend()
 
     # Multi-pod K8s: set RUN_MIGRATIONS_ON_STARTUP=false + run `make migrate-up`
     # out-of-band.
